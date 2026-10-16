@@ -7,6 +7,7 @@ Cloud (Neon):   DATABASE_URL='postgresql://...' OWNER_EMAIL=you@example.com uv r
 
 import asyncio
 import getpass
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,14 @@ from app.core.db import SessionLocal  # noqa: E402
 from app.models import User  # noqa: E402
 
 
+def local_timezone() -> str:
+    """This computer's IANA timezone (e.g. Asia/Kolkata), so reminders and "today" match the user's day."""
+    try:
+        return os.readlink("/etc/localtime").split("zoneinfo/", 1)[1]
+    except (OSError, IndexError):
+        return "UTC"
+
+
 async def main() -> None:
     email = get_settings().owner_email.lower()
     password = getpass.getpass(f"New GoalCoach password for {email}: ")
@@ -29,7 +38,7 @@ async def main() -> None:
     async with SessionLocal() as session:
         user = await session.scalar(select(User).where(func.lower(User.email) == email))
         if user is None:
-            user = User(email=email, hashed_password="", is_active=True, is_verified=True)
+            user = User(email=email, hashed_password="", is_active=True, is_verified=True, timezone=local_timezone())
             session.add(user)
             print(f"Created account {email}.")
         user.hashed_password = PasswordHelper().hash(password)
