@@ -123,7 +123,7 @@ The same app serves the web API and a **remote MCP endpoint** at `/mcp`, protect
    - A job that POSTs `/jobs/send-reminders` every 15 minutes, with header `X-Jobs-Secret: <JOBS_SECRET>`, sends the reminders:
      - the nightly reminder opens Claude with "Log my day" and is skipped on rest days, days off and days you've already logged;
      - the 7 am reminder shows today's plan, built from your routine if needed.
-7. **Optional scheduled jobs:** add repo secrets `API_URL` and `JOBS_SECRET` for `.github/workflows/cron.yml`. It runs the feed refresh, timeline checks and weekly review.
+7. **Feed refresh (optional):** a cron-job.org job that POSTs `/jobs/ingest-feeds` once a day, with the same `X-Jobs-Secret` header. Claude also refreshes the feeds itself when they're more than a day old. Weekly reviews and "what's new" are done with Claude, so they aren't scheduled. `.github/workflows/cron.yml` can run any job by hand from the Actions tab (needs repo secrets `API_URL` and `JOBS_SECRET`).
 
 Use one place for your data: once the connector works, remove the local `goalcoach` entry from Claude Desktop's config and use the connector everywhere. The local SQLite file and Neon are separate databases.
 

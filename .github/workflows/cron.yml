@@ -5,11 +5,8 @@
 name: scheduled-jobs
 
 on:
-  schedule:
-    - cron: "0 2 * * *"      # ingest-feeds
-    - cron: "30 20 * * *"    # check-timeline (after most users have logged their day)
-    - cron: "0 6 * * 0"      # trend-scan (weekly)
-    - cron: "30 0 * * 1"     # weekly-review (for the week that just ended)
+  # Manual only. Keep-alive, reminders and the daily feed refresh run on cron-job.org (see README); weekly
+  # reviews and 'what's new' are done with Claude, so they are not scheduled here.
   workflow_dispatch:
     inputs:
       job:
@@ -25,13 +22,7 @@ jobs:
       - name: Pick job
         id: pick
         run: |
-          case "${{ github.event.schedule }}" in
-            "0 2 * * *")    job=ingest-feeds ;;
-            "30 20 * * *")  job=check-timeline ;;
-            "0 6 * * 0")    job=trend-scan ;;
-            "30 0 * * 1")   job=weekly-review ;;
-            *)              job="${{ inputs.job }}" ;;
-          esac
+          job="${{ inputs.job }}"
           echo "job=$job" >> "$GITHUB_OUTPUT"
       - name: Call API
         run: |
