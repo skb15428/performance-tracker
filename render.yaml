@@ -1,0 +1,36 @@
+# Render Blueprint: one free web service = web API + remote MCP endpoint for Claude (at /mcp).
+# Database: Neon free Postgres (Render's free Postgres expires).
+services:
+  - type: web
+    name: goalcoach-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run --no-dev alembic upgrade head && uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false # Neon connection string (postgresql://...?sslmode=require)
+      - key: PUBLIC_URL
+        sync: false # this service's URL, e.g. https://goalcoach-api.onrender.com
+      - key: OWNER_EMAIL
+        sync: false # your email; the account Claude acts as
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FERNET_KEY
+        sync: false # from scripts/gen_keys.py
+      - key: JOBS_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false # the Vercel URL of the dashboard, e.g. ["https://goalcoach.vercel.app"]
+      - key: ALLOW_REGISTRATION
+        value: "false" # single user: the owner account is created with scripts/set_password.py
+      - key: VAPID_PUBLIC_KEY
+        sync: false # from scripts/gen_keys.py (push reminders)
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false # mailto:you@example.com

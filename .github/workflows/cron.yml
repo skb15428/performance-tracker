@@ -1,0 +1,41 @@
+# Triggers the backend's daily/weekly jobs. Needs repo secrets API_URL (e.g. https://goalcoach-api.onrender.com)
+# and JOBS_SECRET (same value as the backend's JOBS_SECRET). Times are UTC.
+# Keep-alive pings and push reminders run more often, so they're better on cron-job.org (free, no minute limits);
+# see README. On a private repo, frequent Actions runs would use up the free Actions minutes.
+name: scheduled-jobs
+
+on:
+  schedule:
+    - cron: "0 2 * * *"      # ingest-feeds
+    - cron: "30 20 * * *"    # check-timeline (after most users have logged their day)
+    - cron: "0 6 * * 0"      # trend-scan (weekly)
+    - cron: "30 0 * * 1"     # weekly-review (for the week that just ended)
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Job to run
+        required: true
+        type: choice
+        options: [send-reminders, ingest-feeds, check-timeline, trend-scan, weekly-review]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pick job
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 2 * * *")    job=ingest-feeds ;;
+            "30 20 * * *")  job=check-timeline ;;
+            "0 6 * * 0")    job=trend-scan ;;
+            "30 0 * * 1")   job=weekly-review ;;
+            *)              job="${{ inputs.job }}" ;;
+          esac
+          echo "job=$job" >> "$GITHUB_OUTPUT"
+      - name: Call API
+        run: |
+          # Free Render instances sleep; the first request wakes them, so allow a long timeout and retry.
+          curl --fail-with-body --retry 3 --retry-delay 20 --retry-all-errors --max-time 300 \
+            -X POST "${{ secrets.API_URL }}/jobs/${{ steps.pick.outputs.job }}" \
+            -H "X-Jobs-Secret: ${{ secrets.JOBS_SECRET }}"
