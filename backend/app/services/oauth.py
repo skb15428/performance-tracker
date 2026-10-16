@@ -36,6 +36,7 @@ CODE_TTL = 5 * 60
 ACCESS_TTL = 24 * 60 * 60
 REFRESH_TTL = 90 * 24 * 60 * 60
 MAX_LOGIN_ATTEMPTS = 5
+AUDIT_TTL = 3 * 24 * 60 * 60
 
 
 def _hash(value: str) -> str:
@@ -134,6 +135,11 @@ class GoalCoachOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode,
                           scope=" ".join(scopes) if scopes else None)
 
 
+async def audit(entry: dict) -> None:
+    """Record an OAuth/MCP request outcome (no secrets) so failed connections can be diagnosed from the database."""
+    await _put("audit", _new_token(), entry.get("client_id") or "", {**entry, "at": time.time()}, AUDIT_TTL)
+
+
 async def pending_request(request_id: str) -> OAuthRecord | None:
     return await _get("pending", request_id)
 
@@ -148,6 +154,8 @@ async def complete_login(request_id: str, password: str) -> tuple[str | None, st
                                                              OAuthRecord.key_hash == _hash(request_id)))
         if rec is None or rec.expires_at < time.time():
             return None, "This sign-in link has expired. Go back to Claude and connect again."
+        if rec.data.get("redirect"):  # already approved (double click / back button): send them on again
+            return rec.data["redirect"], None
         email = get_settings().owner_email.lower()
         user = await session.scalar(select(User).where(func.lower(User.email) == email))
         verified = False
@@ -174,6 +182,8 @@ async def complete_login(request_id: str, password: str) -> tuple[str | None, st
                 resource=params.resource, subject=str(user.id),
             ).model_dump(mode="json"),
         ))
-        await session.delete(rec)
+        redirect = construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state)
+        rec.data = {**rec.data, "redirect": redirect}
+        rec.expires_at = time.time() + CODE_TTL
         await session.commit()
-        return construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state), None
+        return redirect, None

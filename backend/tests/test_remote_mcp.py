@@ -96,6 +96,9 @@ async def test_remote_mcp_oauth_flow():
             assert ok.status_code == 302
             callback = parse_qs(urlparse(ok.headers["location"]).query)
             assert callback["state"] == ["xyz"]
+            # A second click / back button sends the user on to Claude again instead of "expired"
+            again_click = await http.post("/oauth/login", data={"request": request_id, "password": PASSWORD})
+            assert again_click.status_code == 302 and again_click.headers["location"] == ok.headers["location"]
 
             token = (await http.post("/token", data={
                 "grant_type": "authorization_code", "code": callback["code"][0], "redirect_uri": REDIRECT,
