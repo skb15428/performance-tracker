@@ -8,3 +8,7 @@ dist/
 .DS_Store
 *.db
 goalcoach.db*
+
+# local env files with real values (keep .env.example tracked)
+.env.*
+!.env.example
