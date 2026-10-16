@@ -7,13 +7,17 @@ Cloud (Neon):   DATABASE_URL='postgresql://...' OWNER_EMAIL=you@example.com uv r
 
 import asyncio
 import getpass
+import sys
+from pathlib import Path
 
-from fastapi_users.password import PasswordHelper
-from sqlalchemy import func, select
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # make `app` importable when run as a script
 
-from app.core.config import get_settings
-from app.core.db import SessionLocal
-from app.models import User
+from fastapi_users.password import PasswordHelper  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
+
+from app.core.config import get_settings  # noqa: E402
+from app.core.db import SessionLocal  # noqa: E402
+from app.models import User  # noqa: E402
 
 
 async def main() -> None:
