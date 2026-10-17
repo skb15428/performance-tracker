@@ -10,8 +10,9 @@ from app.core.db import get_session
 from app.models import Activity, ActivityLink, DailyEntry, DailyReview, TrendSuggestion, User
 from app.routers.goals import goal_out
 from app.services import roadmap, timeline, weekly
-from app.services.analysis import load_goals_with_items, plan_for, streak_before
+from app.services.analysis import daily_targets, load_goals_with_items, plan_for, streak_before
 from app.services.timeline import planned_fraction
+from app.services.push import local_now
 from app.services.weekly import week_start_of
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -19,10 +20,10 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("/summary")
 async def summary(days: int = 30, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
-    today = date.today()
+    today = local_now(user.timezone).date()  # the user's day, not the server's (UTC on Render)
     start = today - timedelta(days=days - 1)
     heat_start = today - timedelta(days=125)
-    goals = await load_goals_with_items(session, user)
+    goals = goals_all = await load_goals_with_items(session, user)
 
     reviews = list(await session.execute(
         select(DailyEntry.date, DailyReview.total_score, DailyReview.adherence, DailyReview.per_goal,
@@ -81,7 +82,27 @@ async def summary(days: int = 30, user: User = Depends(current_user), session: A
     )
     adherence = [r.adherence for r in scored if r.date >= start and r.adherence is not None]
     logged_today = bool(latest and latest.date == today)
+    # Mon-Sun strip for this week: what each day was/is (done, rest, missed, today, upcoming)
+    tracked = [g for g in goals_all if g.intake_status == "active"]
+    by_day = {r.date: r for r in reviews}
+    week = []
+    for n in range(7):
+        d = week_start_of(today) + timedelta(days=n)
+        plan_minutes = sum(p.minutes for p in await plan_for(session, user.id, d))
+        planned = plan_minutes or sum((await daily_targets(session, user, tracked, d)).values())
+        r = by_day.get(d)
+        if r is not None:
+            state = "rest" if r.rest_day else "done"
+        elif planned == 0:
+            state = "rest"
+        else:
+            state = "today" if d == today else "upcoming" if d > today else "missed"
+        week.append({"date": d.isoformat(), "state": state, "is_today": d == today, "planned_minutes": planned,
+                     "score": None if r is None or r.rest_day else r.total_score})
+
     return {
+        "today": today.isoformat(),
+        "week": week,
         "scores": [{"date": r.date.isoformat(), "score": r.total_score} for r in scored if r.date >= start],
         "heatmap": [{"date": r.date.isoformat(), "score": r.total_score, "rest": r.rest_day} for r in reviews],
         "weekly_effort": [{"week": w, **v} for w, v in sorted(weekly_minutes.items())],

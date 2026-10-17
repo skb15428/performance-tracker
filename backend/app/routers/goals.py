@@ -25,6 +25,7 @@ from app.schemas import (
     TimelineOut,
 )
 from app.services import intake, roadmap, timeline
+from app.services.push import local_now
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -36,7 +37,7 @@ async def goal_out(session: AsyncSession, user: User, goal: Goal) -> GoalOut:
     done = sum(i.est_hours if i.status == "done" else min(i.hours_logged, i.est_hours) for i in items)
     out.progress_pct = round(100 * done / total, 1) if total else 0
     if goal.intake_status == "active":
-        out.timeline = TimelineOut(**(await timeline.goal_status(session, user, goal, date.today())).as_dict())
+        out.timeline = TimelineOut(**(await timeline.goal_status(session, user, goal, local_now(user.timezone).date())).as_dict())
         pending = await timeline.pending_replan(session, goal.id)
         out.pending_replan_id = pending.id if pending else None
     return out

@@ -170,3 +170,28 @@ async def test_rule_fallback_without_llm(client):
     assert draft["draft"]["tomorrow"][0]["roadmap_item_id"] == item["id"]
     r = await client.post(f"/entries/{day}/confirm", headers=h, json={"analysis": draft["draft"], "used_llm": False})
     assert r.json()["review"]["total_score"] > 50
+
+
+async def test_step_ticks_and_week_strip(client):
+    from tests.conftest import register
+    h = await register(client, "steps@example.com")
+    r = await client.post("/goals", headers=h, json={"title": "Learn RAG"})
+    goal_id = r.json()["goal"]["id"]
+    phase = (await client.post(f"/goals/{goal_id}/roadmap/phases", headers=h, json={"title": "P"})).json()["phases"][0]
+    await client.post(f"/goals/{goal_id}/roadmap/items", headers=h, json={"phase_id": phase["id"], "title": "RAG", "est_hours": 5})
+    day = (await client.get("/dashboard/summary", headers=h)).json()["today"]
+    item = (await client.post("/plan", headers=h, json={"date_for": day, "title": "Study", "minutes": 60})).json()
+    # give it steps the way Claude does, then tick the second one from the web app
+    from app.core.db import SessionLocal
+    from app.models import PlanItem
+    async with SessionLocal() as s:
+        p = await s.get(PlanItem, item["id"])
+        p.details = {"steps": [{"text": "Read", "minutes": 30}, {"text": "Code", "minutes": 30}], "done_when": "x"}
+        await s.commit()
+    out = (await client.patch(f"/plan/{item['id']}", headers=h, json={"done_steps": [1]})).json()
+    assert [st.get("done") for st in out["details"]["steps"]] == [False, True] and out["details"]["done_when"] == "x"
+
+    dash = (await client.get("/dashboard/summary", headers=h)).json()
+    assert len(dash["week"]) == 7 and sum(d["is_today"] for d in dash["week"]) == 1
+    today_cell = next(d for d in dash["week"] if d["is_today"])
+    assert today_cell["state"] == "today" and today_cell["planned_minutes"] == 60

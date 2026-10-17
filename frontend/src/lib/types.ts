@@ -144,7 +144,7 @@ export type Entry = {
 
 export type PlanDetails = {
   why?: string
-  steps?: { text: string; minutes: number }[]
+  steps?: { text: string; minutes: number; done?: boolean }[]
   resources?: { title: string; url: string }[]
   done_when?: string
 }
@@ -231,7 +231,17 @@ export type Settings = {
   vapid_public_key: string
 }
 
+export type WeekDay = {
+  date: string
+  state: 'done' | 'rest' | 'missed' | 'today' | 'upcoming'
+  is_today: boolean
+  planned_minutes: number
+  score: number | null
+}
+
 export type Dashboard = {
+  today: string
+  week: WeekDay[]
   scores: { date: string; score: number }[]
   heatmap: { date: string; score: number; rest?: boolean }[]
   weekly_effort: ({ week: string } & Record<string, number | string>)[]

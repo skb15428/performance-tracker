@@ -50,7 +50,7 @@ export function Card({
   eyebrow?: ReactNode
 }) {
   return (
-    <section className={cx('rounded-3xl border border-line bg-surface p-5 sm:p-6', className)}>
+    <section className={cx('rise rounded-3xl border border-line bg-surface p-5 sm:p-6', className)}>
       {(title || action || eyebrow) && (
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -101,8 +101,13 @@ export function Spinner({ className = 'size-5' }: { className?: string }) {
 
 export function Loading() {
   return (
-    <div className="flex justify-center py-20 text-accent">
-      <Spinner className="size-7" />
+    <div className="space-y-4 py-2" aria-busy="true" aria-label="Loading">
+      <div className="skeleton h-4 w-40 rounded-full" />
+      <div className="skeleton h-12 w-2/3 rounded-2xl" />
+      <div className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-3">
+        <div className="skeleton h-64 rounded-3xl lg:col-span-2" />
+        <div className="skeleton h-64 rounded-3xl" />
+      </div>
     </div>
   )
 }

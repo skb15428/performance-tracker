@@ -62,12 +62,74 @@ function ItemRow({ item }: { item: RoadmapItem }) {
   )
 }
 
+function phaseProgress(items: RoadmapItem[]) {
+  const live = items.filter((i) => i.status !== 'skipped')
+  const total = live.reduce((s, i) => s + i.est_hours, 0)
+  const done = live.reduce((s, i) => s + (i.status === 'done' ? i.est_hours : Math.min(i.hours_logged, i.est_hours)), 0)
+  return { total, done, pct: total ? Math.round((done / total) * 100) : 0 }
+}
+
+function Journey({ phases }: { phases: RoadmapOut['phases'] }) {
+  const progress = phases.map((p) => phaseProgress(p.items))
+  const current = progress.findIndex((p) => p.pct < 100)
+  return (
+    <div className="rise overflow-x-auto rounded-3xl border border-line bg-surface p-5 sm:p-6">
+      <p className="mb-5 text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Your journey</p>
+      <ol className="flex min-w-max gap-0">
+        {phases.map((phase, i) => {
+          const pr = progress[i]
+          const state = pr.pct >= 100 ? 'done' : i === current ? 'current' : 'later'
+          const milestones = phase.items.filter((it) => it.type === 'milestone')
+          return (
+            <li key={phase.id} className="relative w-56 shrink-0 pr-4 sm:w-64">
+              <div className="mb-4 flex items-center">
+                <span
+                  className={cx(
+                    'relative z-10 flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
+                    state === 'done' && 'bg-emerald-500 text-white',
+                    state === 'current' && 'bg-ink text-canvas ring-4 ring-accent-soft',
+                    state === 'later' && 'border border-line bg-surface text-muted',
+                  )}
+                >
+                  {state === 'done' ? '✓' : i + 1}
+                </span>
+                {i < phases.length - 1 && (
+                  <span className={cx('h-0.5 flex-1', state === 'done' ? 'bg-emerald-500' : 'bg-line')} />
+                )}
+              </div>
+              {state === 'current' && <span className="mb-2 inline-block rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] font-semibold text-accent-ink">You are here</span>}
+              <p className={cx('font-display text-xl leading-tight', state === 'later' && 'text-muted')}>{phase.title.replace(/^Phase \d+\s*[—–-]\s*/, '')}</p>
+              <p className="mt-1 text-xs text-muted tabular-nums">
+                {prettyDate(phase.start_date)} – {prettyDate(phase.due_date, { year: '2-digit' })}
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <ProgressBar value={pr.pct} className="h-1" />
+                <span className="text-[11px] text-muted tabular-nums">{pr.pct}%</span>
+              </div>
+              <p className="mt-2 text-xs text-muted">
+                {phase.items.length} items · {Math.round(pr.total)}h
+              </p>
+              {milestones.map((m) => (
+                <p key={m.id} className="mt-1.5 flex gap-1.5 text-xs">
+                  <span className={m.status === 'done' ? 'text-emerald-500' : 'text-[#ff8a5c]'}>◆</span>
+                  <span className={cx(m.status === 'done' && 'text-muted line-through')}>{m.title}</span>
+                </p>
+              ))}
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
 function Roadmap({ goalId }: { goalId: number }) {
   const { data, isLoading } = useQuery({ queryKey: ['roadmap', goalId], queryFn: () => api<RoadmapOut>(`/goals/${goalId}/roadmap`) })
   if (isLoading || !data) return <Loading />
   if (!data.phases.length) return <EmptyState title="No roadmap yet" />
   return (
     <div className="space-y-4">
+      <Journey phases={data.phases} />
       {data.phases.map((phase, i) => (
         <Card
           key={phase.id}

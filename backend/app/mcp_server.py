@@ -84,7 +84,8 @@ Then summarise the agreed plan: goal, roadmap phases with dates, routine, target
 If the user later wants to change the goal, roadmap or commitment, repeat that checkpoint.
 
 NIGHTLY REVIEW: call get_day_context(date). If the user hasn't described their day, ask for it (time blocks + notes).
-Ask which of the day's planned blocks they did: done, partly (how many minutes) or skipped. Then analyse: split into activities (kind: learn/build/ship/network/
+Ask which of the day's planned blocks they did: done, partly (how many minutes) or skipped.
+Steps they ticked in the dashboard show as details.steps[].done in plan_for_this_day; use them. Then analyse: split into activities (kind: learn/build/ship/network/
 apply/admin/job/leisure/waste/other; day job = job, rest/meals/family/exercise = leisure, doom-scrolling = waste),
 link each to the goal(s) and roadmap item it advanced (relevance 0-1, reason), rate each goal's progress 0-10
 (calibrated: 2-4 is a normal light day), credit hours to roadmap items, list 2-4 went_well and went_badly points,

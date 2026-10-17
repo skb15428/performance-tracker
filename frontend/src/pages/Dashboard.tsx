@@ -8,7 +8,7 @@ import TaskCard from '../components/TaskCard'
 import { Button, Card, EmptyState, ErrorText, Loading, PageHeader, ProgressBar, ScoreRing, TimelineBadge, cx } from '../components/ui'
 import { api } from '../lib/api'
 import { addDays, fmtMinutes, prettyDate, todayIso } from '../lib/dates'
-import type { Dashboard as DashboardData, Settings } from '../lib/types'
+import type { Dashboard as DashboardData, Settings, WeekDay } from '../lib/types'
 
 const seriesColor = (i: number) => `var(--series-${(i % 8) + 1})`
 const axis = { stroke: 'var(--chart-axis)', fontSize: 11, tickLine: false, axisLine: false }
@@ -43,6 +43,80 @@ function Stat({ label, value, sub, to, className }: { label: string; value: Reac
     </Link>
   ) : (
     <div className={className}>{body}</div>
+  )
+}
+
+const WEEK_STYLE: Record<WeekDay['state'], { ring: string; label: string }> = {
+  done: { ring: 'bg-emerald-500 text-white', label: 'Logged' },
+  rest: { ring: 'bg-surface-2 text-muted', label: 'Rest' },
+  missed: { ring: 'bg-red-500/15 text-red-600 dark:text-red-300', label: 'Missed' },
+  today: { ring: 'bg-ink text-canvas', label: 'Today' },
+  upcoming: { ring: 'border border-dashed border-line text-muted', label: 'Planned' },
+}
+
+function WeekStrip({ week }: { week: WeekDay[] }) {
+  return (
+    <div className="rise grid grid-cols-7 gap-1.5 rounded-3xl border border-line bg-surface p-2 sm:gap-3 sm:p-3">
+      {week.map((d) => {
+        const style = WEEK_STYLE[d.state]
+        const date = new Date(`${d.date}T12:00:00`)
+        return (
+          <div
+            key={d.date}
+            title={`${prettyDate(d.date, { weekday: 'long' })}: ${style.label}${d.score !== null ? ` · score ${Math.round(d.score)}` : ''}${d.planned_minutes ? ` · ${fmtMinutes(d.planned_minutes)} planned` : ''}`}
+            className={cx('flex flex-col items-center gap-1.5 rounded-2xl py-2 sm:py-3', d.is_today && 'bg-accent-soft')}
+          >
+            <span className="text-[10px] font-semibold tracking-wider text-muted uppercase">
+              {date.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2)}
+            </span>
+            <span className={cx('flex size-9 items-center justify-center rounded-full text-sm font-semibold tabular-nums sm:size-10', style.ring)}>
+              {date.getDate()}
+            </span>
+            <span className="text-[10px] text-muted tabular-nums">
+              {d.score !== null ? Math.round(d.score) : <span className="hidden sm:inline">{style.label}</span>}
+              {d.score === null && <span className="sm:hidden">&nbsp;</span>}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DayProgress({ plan }: { plan: DashboardData['today_plan'] }) {
+  const total = plan.reduce((s, p) => s + p.minutes, 0)
+  const done = plan.reduce((s, p) => {
+    if (p.status === 'done') return s + p.minutes
+    if (p.status === 'partial') return s + (p.done_minutes ?? 0)
+    if (p.status === 'open') return s + (p.details?.steps ?? []).filter((st) => st.done).reduce((a, st) => a + st.minutes, 0)
+    return s
+  }, 0)
+  const next = plan.find((p) => p.status === 'open')
+  const pct = total ? Math.round((done / total) * 100) : 0
+  return (
+    <div className="rise flex flex-wrap items-center gap-x-6 gap-y-3 rounded-3xl border border-line bg-surface p-5">
+      <div className="min-w-48 flex-1">
+        <div className="mb-2 flex items-baseline justify-between">
+          <span className="text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Today's progress</span>
+          <span className="text-xs text-muted tabular-nums">
+            {fmtMinutes(done)} of {fmtMinutes(total)}
+          </span>
+        </div>
+        <ProgressBar value={pct} className="h-2" />
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="font-display text-4xl tabular-nums">{pct}%</span>
+      </div>
+      {next ? (
+        <p className="w-full text-sm sm:w-auto">
+          <span className="text-muted">Next up · </span>
+          <span className="font-medium tabular-nums">{next.time_block ? `${next.time_block.split('-')[0]} ` : ''}</span>
+          {next.title.split(/\s+[-—–]\s+done when/i)[0]}
+        </p>
+      ) : (
+        <p className="w-full text-sm text-emerald-700 sm:w-auto dark:text-emerald-300">All blocks done today 🎉</p>
+      )}
+    </div>
   )
 }
 
@@ -94,7 +168,7 @@ export default function Dashboard() {
   if (isLoading) return <Loading />
   if (!data) return <ErrorText error={error} />
 
-  const today = todayIso()
+  const today = data.today ?? todayIso()
   const loggedToday = data.latest?.date === today
   const goals = data.goals.filter((g) => g.intake_status === 'active')
   const goalIndex = new Map(data.goals.map((g, i) => [String(g.id), i]))
@@ -145,6 +219,13 @@ export default function Dashboard() {
         }
       />
       <ReplanBanner />
+
+      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <WeekStrip week={data.week} />
+        </div>
+        <div className="lg:col-span-2">{data.today_plan.length > 0 && <DayProgress plan={data.today_plan} />}</div>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Today's plan: the hero */}

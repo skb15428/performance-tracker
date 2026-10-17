@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { api } from '../lib/api'
 import { fmtMinutes } from '../lib/dates'
 import type { PlanDetails } from '../lib/types'
+import FocusMode, { Celebration } from './FocusMode'
 import { Button, cx } from './ui'
 
 export type TaskBlock = {
@@ -46,7 +48,26 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
     onSuccess: () => qc.invalidateQueries(),
   })
   const { title, details } = normalise(block)
-  const steps = details.steps ?? []
+  const [ticks, setTicks] = useState<boolean[] | null>(null) // optimistic step state until the server confirms
+  const [focus, setFocus] = useState(false)
+  const [celebrate, setCelebrate] = useState(false)
+  const steps = (details.steps ?? []).map((s, i) => ({ ...s, done: ticks ? ticks[i] : !!s.done }))
+  const doneCount = steps.filter((s) => s.done).length
+  const saveTicks = useMutation({
+    mutationFn: (done: boolean[]) =>
+      api(`/plan/${block.id}`, { method: 'PATCH', json: { done_steps: done.flatMap((d, i) => (d ? [i] : [])) } }),
+    onSuccess: () => qc.invalidateQueries(),
+  })
+  const toggleStep = (index: number, value: boolean) => {
+    const next = steps.map((s, i) => (i === index ? value : !!s.done))
+    setTicks(next)
+    saveTicks.mutate(next)
+    if (next.every(Boolean) && block.status !== 'done') {
+      setCelebrate(true)
+      setStatus.mutate('done')
+      setTimeout(() => setCelebrate(false), 1400)
+    }
+  }
   const resources = (details.resources ?? []).filter((r) => r.url || r.title)
   const start = block.time_block.split('-')[0]?.trim()
   let clock = start
@@ -60,6 +81,7 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
         (done || skipped) && 'opacity-80',
       )}
     >
+      {celebrate && <Celebration />}
       <div className="h-1 w-full bg-gradient-to-r from-brand-500 via-[#b46cff] to-[#ff8a5c]" />
       <div className={cx('p-5 sm:p-7', compact && 'sm:p-6')}>
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
@@ -81,6 +103,16 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
           {title}
         </h3>
         {details.why && <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted">{details.why}</p>}
+        {steps.length > 0 && (
+          <div className="mt-4 flex items-center gap-3">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+              <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${(doneCount / steps.length) * 100}%` }} />
+            </div>
+            <span className="text-xs text-muted tabular-nums">
+              {doneCount}/{steps.length} steps
+            </span>
+          </div>
+        )}
 
         {(steps.length > 0 || details.done_when || resources.length > 0) && (
           <div className="mt-6 grid gap-6 lg:grid-cols-[1.35fr_1fr]">
@@ -92,11 +124,18 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
                   clock = from ? addMinutes(from, step.minutes) : ''
                   return (
                     <li key={i} className="relative flex gap-4">
-                      <span className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-sm font-semibold tabular-nums">
-                        {i + 1}
-                      </span>
+                      <button
+                        onClick={() => toggleStep(i, !step.done)}
+                        aria-label={step.done ? `Untick step ${i + 1}` : `Tick step ${i + 1}`}
+                        className={cx(
+                          'relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border text-sm font-semibold tabular-nums transition',
+                          step.done ? 'pop border-emerald-500 bg-emerald-500 text-white' : 'border-line bg-surface hover:border-accent',
+                        )}
+                      >
+                        {step.done ? '✓' : i + 1}
+                      </button>
                       <div className="min-w-0 pt-1">
-                        <p className="text-[15px] leading-snug">{step.text}</p>
+                        <p className={cx('text-[15px] leading-snug transition', step.done && 'text-muted line-through')}>{step.text}</p>
                         <p className="mt-1 text-xs text-muted tabular-nums">
                           {from && clock ? `${from} – ${clock} · ` : ''}
                           {fmtMinutes(step.minutes)}
@@ -145,13 +184,18 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
         <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-line pt-5">
           {block.status === 'open' || block.status === 'partial' ? (
             <>
-              <Button loading={setStatus.isPending && setStatus.variables === 'done'} onClick={() => setStatus.mutate('done')}>
+              {steps.length > 0 && <Button onClick={() => setFocus(true)}>▶ Start focus</Button>}
+              <Button
+                variant={steps.length > 0 ? 'secondary' : 'primary'}
+                loading={setStatus.isPending && setStatus.variables === 'done'}
+                onClick={() => setStatus.mutate('done')}
+              >
                 ✓ Mark done
               </Button>
               <Button variant="ghost" loading={setStatus.isPending && setStatus.variables === 'skipped'} onClick={() => setStatus.mutate('skipped')}>
                 Skip today
               </Button>
-              <span className="ml-auto text-xs text-muted">Did part of it? Tell Claude tonight.</span>
+              <span className="ml-auto hidden text-xs text-muted sm:inline">Did part of it? Tell Claude tonight.</span>
             </>
           ) : (
             <Button variant="secondary" size="sm" loading={setStatus.isPending} onClick={() => setStatus.mutate('open')}>
@@ -160,6 +204,16 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
           )}
         </div>
       </div>
+      {focus && (
+        <FocusMode
+          title={title}
+          steps={steps}
+          doneWhen={details.done_when}
+          onToggleStep={toggleStep}
+          onComplete={() => setStatus.mutate('done')}
+          onClose={() => setFocus(false)}
+        />
+      )}
     </article>
   )
 }

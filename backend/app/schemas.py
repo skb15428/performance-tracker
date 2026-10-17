@@ -272,6 +272,7 @@ class PlanPatch(BaseModel):
     title: str | None = None
     time_block: str | None = None
     minutes: int | None = None
+    done_steps: list[int] | None = None  # indexes of the block's steps the user has ticked off
 
 
 # ----- replans / trends / reviews -----

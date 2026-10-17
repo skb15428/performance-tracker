@@ -41,8 +41,14 @@ async def _get(session: AsyncSession, item_id: int, user: User) -> PlanItem:
 async def update_plan_item(item_id: int, body: PlanPatch, user: User = Depends(current_user),
                            session: AsyncSession = Depends(get_session)):
     item = await _get(session, item_id, user)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    done_steps = data.pop("done_steps", None)
+    for k, v in data.items():
         setattr(item, k, v)
+    if done_steps is not None:
+        ticked = set(done_steps)
+        steps = [{**step, "done": i in ticked} for i, step in enumerate((item.details or {}).get("steps", []))]
+        item.details = {**(item.details or {}), "steps": steps}
     await session.commit()
     return item
 
