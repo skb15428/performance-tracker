@@ -193,33 +193,54 @@ export default function Dashboard() {
       </>
     )
 
+  const firstOpen = data.today_plan.find((p) => p.status === 'open')
   return (
     <>
-      <PageHeader
-        eyebrow={prettyDate(today, { weekday: 'long', month: 'long', day: 'numeric' })}
-        title={
-          <>
+      <header className="rise mb-5 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold tracking-[0.16em] text-muted uppercase">
+            {prettyDate(today, { weekday: 'long', month: 'long', day: 'numeric' })}
+          </p>
+          <h1 className="mt-1 font-display text-[1.75rem] leading-tight sm:text-4xl">
             {greeting()}
             {firstName ? (
               <>
                 , <span className="gradient-text italic">{firstName}</span>
               </>
             ) : null}
-          </>
-        }
-        subtitle={data.today_plan.length ? `${data.today_plan.length} block${data.today_plan.length > 1 ? 's' : ''} planned today.` : undefined}
-        action={
-          loggedToday ? (
-            <Link to="/log">
-              <Button variant="secondary">View today's review</Button>
-            </Link>
-          ) : (
-            <OpenClaude message="Log my day">Log today in Claude</OpenClaude>
-          )
-        }
-      />
+          </h1>
+        </div>
+        {loggedToday ? (
+          <Link to="/log" className="shrink-0">
+            <Button variant="secondary" size="sm">
+              Today's review
+            </Button>
+          </Link>
+        ) : (
+          <OpenClaude message="Log my day" variant="secondary" className="shrink-0 !px-3 !py-1.5 !text-xs">
+            Log day
+          </OpenClaude>
+        )}
+      </header>
       <ReplanBanner />
 
+      {/* What to do now: the first thing on the page */}
+      <section aria-label="Today's tasks" className="space-y-4">
+        {data.today_plan.length ? (
+          data.today_plan.map((p) => <TaskCard key={p.id} block={p} goalTitle={goalTitle(p.goal_id)} highlight={p.id === firstOpen?.id} />)
+        ) : (
+          <div className="rise flex flex-col justify-between rounded-3xl border border-accent/40 bg-surface p-7 ring-1 ring-accent/20">
+            <p className="text-[11px] font-semibold tracking-[0.14em] text-accent-ink uppercase">Today's task</p>
+            <p className="mt-3 font-display text-3xl leading-tight">Nothing planned yet.</p>
+            <p className="mt-2 text-sm text-muted">Ask Claude and it builds today's blocks from your routine and roadmap.</p>
+            <div className="mt-6">
+              <OpenClaude message="What's my plan today?">Get today's plan in Claude</OpenClaude>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <h2 className="mt-10 mb-4 font-display text-3xl">Your day &amp; week</h2>
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="lg:col-span-3">
           <WeekStrip week={data.week} />
@@ -227,26 +248,8 @@ export default function Dashboard() {
         <div className="lg:col-span-2">{data.today_plan.length > 0 && <DayProgress plan={data.today_plan} />}</div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Today's plan: the hero */}
-        <div className="min-w-0 space-y-4 lg:col-span-2">
-          {data.today_plan.length ? (
-            data.today_plan.map((p) => <TaskCard key={p.id} block={p} goalTitle={goalTitle(p.goal_id)} />)
-          ) : (
-            <div className="flex h-full flex-col justify-between rounded-3xl border border-line bg-surface p-7">
-              <div>
-                <p className="text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Today's plan</p>
-                <p className="mt-3 font-display text-3xl leading-tight">Nothing planned yet.</p>
-                <p className="mt-2 text-sm text-muted">Ask Claude and it builds today's blocks from your routine and roadmap.</p>
-              </div>
-              <div className="mt-6">
-                <OpenClaude message="What's my plan today?">Get today's plan in Claude</OpenClaude>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Score */}
+      {/* Score */}
+      <div className="grid grid-cols-1 gap-4">
         <Card eyebrow="Last review" title={data.latest ? prettyDate(data.latest.date, { weekday: 'long' }) : undefined}>
           {data.latest ? (
             <>

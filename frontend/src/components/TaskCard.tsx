@@ -41,7 +41,34 @@ function hostname(url: string): string {
   }
 }
 
-export default function TaskCard({ block, goalTitle, compact = false }: { block: TaskBlock; goalTitle?: string; compact?: boolean }) {
+function toMinutes(hhmm: string | undefined): number | null {
+  const [h, m] = (hhmm ?? '').trim().split(':').map(Number)
+  return Number.isNaN(h) || Number.isNaN(m) ? null : h * 60 + m
+}
+
+/** "NOW · ends 11:00", "UP NEXT · starts in 2h 10m", or "STILL OPEN" for a block of today. */
+function liveLabel(timeBlock: string, now: Date): { text: string; live: boolean } {
+  const [startText, endText] = timeBlock.split('-')
+  const start = toMinutes(startText)
+  const end = toMinutes(endText)
+  const cur = now.getHours() * 60 + now.getMinutes()
+  if (start === null || end === null) return { text: 'Today', live: false }
+  if (cur < start) return { text: `Up next · starts in ${fmtMinutes(start - cur)}`, live: false }
+  if (cur < end) return { text: `Now · ends ${endText.trim()}`, live: true }
+  return { text: 'Still open today', live: false }
+}
+
+export default function TaskCard({
+  block,
+  goalTitle,
+  compact = false,
+  highlight = false,
+}: {
+  block: TaskBlock
+  goalTitle?: string
+  compact?: boolean
+  highlight?: boolean
+}) {
   const qc = useQueryClient()
   const setStatus = useMutation({
     mutationFn: (status: TaskBlock['status']) => api(`/plan/${block.id}`, { method: 'PATCH', json: { status } }),
@@ -77,13 +104,27 @@ export default function TaskCard({ block, goalTitle, compact = false }: { block:
   return (
     <article
       className={cx(
-        'relative overflow-hidden rounded-3xl border border-line bg-surface transition',
+        'relative overflow-hidden rounded-3xl border bg-surface transition',
+        highlight && block.status === 'open' ? 'border-accent/50 shadow-[0_20px_60px_-25px] shadow-accent/50 ring-1 ring-accent/30' : 'border-line',
         (done || skipped) && 'opacity-80',
       )}
     >
       {celebrate && <Celebration />}
       <div className="h-1 w-full bg-gradient-to-r from-brand-500 via-[#b46cff] to-[#ff8a5c]" />
       <div className={cx('p-5 sm:p-7', compact && 'sm:p-6')}>
+        {highlight && block.status === 'open' && block.time_block && (
+          <p className="mb-3 flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-accent-ink uppercase">
+            {(() => {
+              const label = liveLabel(block.time_block, new Date())
+              return (
+                <>
+                  <span className={cx('size-2 rounded-full bg-[var(--accent)]', label.live && 'animate-pulse')} />
+                  {label.text}
+                </>
+              )
+            })()}
+          </p>
+        )}
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
           {block.time_block && (
             <span className="rounded-full bg-ink px-3 py-1 font-semibold text-canvas tabular-nums">{block.time_block.replace('-', ' – ')}</span>
