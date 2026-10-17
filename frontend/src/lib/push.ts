@@ -16,6 +16,14 @@ export async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return
   const url = import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js'
   await navigator.serviceWorker.register(url, { type: import.meta.env.DEV ? 'module' : 'classic' }).catch(() => {})
+  // When an updated service worker takes control, reload once so the page shows the new version.
+  let reloaded = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!reloaded && !import.meta.env.DEV) {
+      reloaded = true
+      window.location.reload()
+    }
+  })
 }
 
 export async function enablePush(vapidPublicKey: string): Promise<void> {

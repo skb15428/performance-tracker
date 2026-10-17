@@ -1,11 +1,14 @@
 /// <reference lib="webworker" />
+import { clientsClaim } from 'workbox-core'
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
 
 declare const self: ServiceWorkerGlobalScope
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
+// A new version takes over open pages right away instead of waiting for every tab to close.
 self.skipWaiting()
+clientsClaim()
 
 self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {}
