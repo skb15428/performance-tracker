@@ -43,7 +43,7 @@ from app.models import (
 )
 from app.routers.goals import goal_out
 from app.services import analysis, commitment, roadmap, timeline, weekly
-from app.services.llm.outputs import DayAnalysis, ReplanDraft, Resource, RoadmapDraft
+from app.services.llm.outputs import DayAnalysis, PlanDetails, ReplanDraft, Resource, RoadmapDraft
 from app.services.push import local_now
 from app.services.trends.feeds import USER_SOURCE_WEIGHT, ensure_default_sources, ingest_all
 from app.services.trends.scan import rank_candidates, search_terms
@@ -52,9 +52,9 @@ INSTRUCTIONS = """GoalCoach tracks the user's goals, roadmaps and daily work. Yo
 encouraging. Their goals are ambitious (e.g. a strong role at an AI company, or becoming self-employed).
 
 Always start a conversation with get_overview. Never invent ids; use the ids the tools return.
-DURING THE DAY: if the user asks what to do today, or today_plan_missing is true, call plan_day and rewrite its
-blocks into concrete tasks with edit_plan. Use edit_plan whenever their day changes; set_plan_item_status as they
-finish blocks.
+DURING THE DAY: if the user asks what to do today, or today_plan_missing is true, call plan_day and fill in each
+block's short title and details (why, steps, resources, done_when) with edit_plan. Use edit_plan whenever their day
+changes; set_plan_item_status as they finish blocks.
 If get_overview lists unlogged_days, briefly offer to log them (a quick summary is enough; if they don't remember or
 took the day off, save it with day_off=True). Don't nag more than once per conversation.
 
@@ -89,9 +89,10 @@ apply/admin/job/leisure/waste/other; day job = job, rest/meals/family/exercise =
 link each to the goal(s) and roadmap item it advanced (relevance 0-1, reason), rate each goal's progress 0-10
 (calibrated: 2-4 is a normal light day), credit hours to roadmap items, list 2-4 went_well and went_badly points,
 write tomorrow's time-blocked plan by filling each goal's routine_tomorrow blocks with the next/overdue roadmap
-items (if a goal has no routine, fit its planned_minutes_tomorrow). Make every block concrete: a specific task and
-its finish line ("Implement hybrid BM25+vector retriever - done when it answers 10 test questions"), not just a
-topic name. Before saving, ask if tomorrow is different (meetings, travel) and adjust. Then
+items (if a goal has no routine, fit its planned_minutes_tomorrow). Make every block concrete and easy to follow: a short title (max ~8 words) plus details:
+why (one sentence linking it to the goal), 2-5 ordered steps with minutes that add up to the block, 1-3 resources
+with real links, and done_when (a checkable finish line, e.g. "your output matches PyTorch on a 4-token example").
+Before saving, ask if tomorrow is different (meetings, travel) and adjust. Then
 one tip. Call save_day_review and present the score with its one-line score_explanation, the score per goal, the
 good/bad points and tomorrow's plan. A rest day has no score: just acknowledge it and show tomorrow's plan.
 If it returns items_over_estimate, ask whether each is done or how many more hours it needs, then call
@@ -751,14 +752,15 @@ async def set_plan_item_status(plan_item_id: int, status: Literal["done", "parti
 def plan_view(items: list[PlanItem]) -> list[dict]:
     return [{"plan_item_id": p.id, "time_block": p.time_block, "title": p.title, "minutes": p.minutes,
              "goal_id": p.goal_id, "roadmap_item_id": p.roadmap_item_id, "status": p.status,
-             "done_minutes": p.done_minutes} for p in items]
+             "done_minutes": p.done_minutes, "details": p.details or {}} for p in items]
 
 
 @mcp.tool()
 async def plan_day(day: str | None = None, replace: bool = False) -> dict:
     """Get the plan for a day (default today), creating it from the user's routines and next roadmap items if there
-    isn't one (e.g. they didn't log last night). replace=True rebuilds the unfinished blocks. The generated titles
-    are just the roadmap item names: rewrite each into a concrete task with a clear finish line via edit_plan."""
+    isn't one (e.g. they didn't log last night). replace=True rebuilds the unfinished blocks. The generated blocks
+    only carry the roadmap item name: give each a short title and details (why, timed steps, resources,
+    done_when) via edit_plan."""
     async with owner_session() as (session, user):
         d = parse_day(day, user)
         existing = await analysis.plan_for(session, user.id, d)
@@ -772,11 +774,11 @@ async def plan_day(day: str | None = None, replace: bool = False) -> dict:
 
 class PlanBlockIn(BaseModel):
     time_block: str = Field(default="", description="HH:MM-HH:MM")
-    title: str = Field(description="Concrete task + finish line, e.g. 'Build BM25 retriever - done when it returns "
-                                   "top-5 for 10 test questions'")
+    title: str = Field(description="Short task name, max ~8 words, e.g. 'Attention from scratch'")
     minutes: int = Field(default=60, ge=5, le=720)
     goal_id: int | None = None
     roadmap_item_id: int | None = None
+    details: PlanDetails | None = Field(default=None, description="why, timed steps, resources, done_when")
 
 
 class PlanBlockUpdate(BaseModel):
@@ -784,6 +786,7 @@ class PlanBlockUpdate(BaseModel):
     time_block: str | None = None
     title: str | None = None
     minutes: int | None = Field(default=None, ge=5, le=720)
+    details: PlanDetails | None = None
 
 
 @mcp.tool()
@@ -806,12 +809,15 @@ async def edit_plan(day: str | None = None, add: list[PlanBlockIn] | None = None
             for field in ("time_block", "title", "minutes"):
                 if (value := getattr(u, field)) is not None:
                     setattr(item, field, value)
+            if u.details is not None:
+                item.details = u.details.model_dump()
         for b in add or []:
             if b.roadmap_item_id is not None:
                 await get_item(session, user, b.roadmap_item_id)  # must be the user's own item
             session.add(PlanItem(user_id=user.id, date_for=d, time_block=b.time_block, title=b.title,
                                  minutes=b.minutes, goal_id=b.goal_id if b.goal_id in goal_ids else None,
-                                 roadmap_item_id=b.roadmap_item_id))
+                                 roadmap_item_id=b.roadmap_item_id,
+                                 details=b.details.model_dump() if b.details else {}))
         await session.flush()
         items = await analysis.plan_for(session, user.id, d)
         return {"date": d.isoformat(), "plan": plan_view(items), "total_minutes": sum(p.minutes for p in items)}

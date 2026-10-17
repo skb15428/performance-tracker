@@ -64,7 +64,7 @@ export default function SettingsPage() {
               <Label>Time zone</Label>
               <Input value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} />
               {browserTz !== form.timezone && (
-                <button type="button" className="mt-1 text-xs text-brand-600" onClick={() => setForm({ ...form, timezone: browserTz })}>
+                <button type="button" className="mt-1 text-xs text-accent-ink" onClick={() => setForm({ ...form, timezone: browserTz })}>
                   Use {browserTz}
                 </button>
               )}
@@ -74,7 +74,7 @@ export default function SettingsPage() {
               <Input type="time" value={form.reminder_time} onChange={(e) => setForm({ ...form, reminder_time: e.target.value })} />
             </label>
             <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <input type="checkbox" className="size-4 accent-brand-600" checked={form.morning_push} onChange={(e) => setForm({ ...form, morning_push: e.target.checked })} />
+              <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={form.morning_push} onChange={(e) => setForm({ ...form, morning_push: e.target.checked })} />
               Also send me today's plan at 7:00 am
             </label>
             <div className="flex justify-end sm:col-span-2">
@@ -86,7 +86,7 @@ export default function SettingsPage() {
         </Card>
 
         <Card title="Notifications">
-          <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">
+          <p className="mb-3 text-sm text-muted">
             Get a nightly nudge to log your day. On iPhone, first use Share → Add to Home Screen, then enable notifications from the installed app.
           </p>
           <Button variant="secondary" loading={push.isPending} onClick={() => push.mutate()} disabled={!pushSupported()}>

@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import OpenClaude from '../components/OpenClaude'
+import TaskCard from '../components/TaskCard'
 import { Button, Card, EmptyState, Input, Loading, PageHeader, ScoreRing, cx, scoreTone } from '../components/ui'
 import { api } from '../lib/api'
 import { addDays, fmtMinutes, prettyDate, todayIso } from '../lib/dates'
@@ -9,38 +10,21 @@ import type { Entry, PlanItem } from '../lib/types'
 // ---------------- Plan for the day ----------------
 
 function DayPlan({ day }: { day: string }) {
-  const qc = useQueryClient()
   const { data: plan = [] } = useQuery({ queryKey: ['plan', day], queryFn: () => api<PlanItem[]>(`/plan?day=${day}`) })
-  const patch = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: PlanItem['status'] }) => api(`/plan/${id}`, { method: 'PATCH', json: { status } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', day] }),
-  })
   if (!plan.length) return null
   const done = plan.filter((p) => p.status === 'done').length
   return (
-    <Card title="Plan for this day" action={<span className="text-xs text-zinc-500">{done}/{plan.length} done</span>}>
-      <p className="mb-3 text-xs text-zinc-500">Tick blocks as you finish them. Partial blocks can be logged in Claude.</p>
-      <ul className="space-y-1.5">
-        {plan.map((p) => (
-          <li key={p.id} className="flex items-center gap-3">
-            <input
-              type="checkbox"
-              className="size-4 accent-brand-600"
-              checked={p.status === 'done'}
-              onChange={(e) => patch.mutate({ id: p.id, status: e.target.checked ? 'done' : 'open' })}
-              aria-label="Done"
-            />
-            <span className="w-24 shrink-0 text-xs text-zinc-500 tabular-nums">{p.time_block || fmtMinutes(p.minutes)}</span>
-            <span className={cx('flex-1 text-sm', p.status === 'done' && 'text-zinc-400 line-through', p.status === 'skipped' && 'text-zinc-400 italic')}>{p.title}</span>
-            {p.status !== 'done' && (
-              <button className="text-xs text-zinc-400 hover:text-zinc-700" onClick={() => patch.mutate({ id: p.id, status: p.status === 'skipped' ? 'open' : 'skipped' })}>
-                {p.status === 'skipped' ? 'undo skip' : 'skip'}
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </Card>
+    <section className="space-y-4">
+      <div className="flex items-end justify-between">
+        <p className="text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Plan for this day</p>
+        <span className="text-xs text-muted tabular-nums">
+          {done}/{plan.length} done
+        </span>
+      </div>
+      {plan.map((p) => (
+        <TaskCard key={p.id} block={p} />
+      ))}
+    </section>
   )
 }
 
@@ -55,7 +39,7 @@ function ReviewResult({ entry }: { entry: Entry }) {
       {review.rest_day ? (
         <Card>
           <p className="font-medium">Rest day 🌿</p>
-          <p className="text-sm text-zinc-500">Not scored, and your streak is safe.</p>
+          <p className="text-sm text-muted">Not scored, and your streak is safe.</p>
         </Card>
       ) : (
       <Card>
@@ -68,14 +52,14 @@ function ReviewResult({ entry }: { entry: Entry }) {
                   <span className="font-medium">{g.title}</span>
                   <span className={cx('font-semibold tabular-nums', scoreTone(g.score * 10))}>{g.score.toFixed(1)}/10</span>
                 </div>
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-muted">
                   {fmtMinutes(g.minutes)} · {g.timeline.replace('_', ' ')}
                   {g.note && ` · ${g.note}`}
                 </p>
               </div>
             ))}
-            {review.breakdown?.explanation && <p className="text-xs text-zinc-500 tabular-nums">{review.breakdown.explanation}</p>}
-            <p className="text-xs text-zinc-500">
+            {review.breakdown?.explanation && <p className="text-xs text-muted tabular-nums">{review.breakdown.explanation}</p>}
+            <p className="text-xs text-muted">
               {review.adherence !== null && `Plan adherence ${Math.round(review.adherence * 100)}% · `}
               {review.drift_minutes > 0 && `${fmtMinutes(review.drift_minutes)} not linked to any goal · `}
               {review.used_llm ? 'AI-reviewed' : 'Rules-only review'}
@@ -92,19 +76,19 @@ function ReviewResult({ entry }: { entry: Entry }) {
           <ul className="list-disc space-y-1 pl-5 text-sm">{review.went_badly.filter(Boolean).map((t, i) => <li key={i}>{t}</li>)}</ul>
         </Card>
       </div>
-      {review.tip && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm text-brand-800 dark:bg-brand-700/20 dark:text-brand-100">💡 {review.tip}</p>}
+      {review.tip && <p className="rounded-xl bg-accent-soft px-4 py-3 text-sm">💡 {review.tip}</p>}
       <Card title={`Tomorrow · ${prettyDate(addDays(entry.date, 1), { weekday: 'long' })}`}>
         {tomorrow.length ? (
           <ul className="space-y-1.5 text-sm">
             {tomorrow.map((p) => (
               <li key={p.id} className="flex gap-3">
-                <span className="w-24 shrink-0 text-xs text-zinc-500 tabular-nums">{p.time_block || fmtMinutes(p.minutes)}</span>
+                <span className="w-24 shrink-0 text-xs text-muted tabular-nums">{p.time_block || fmtMinutes(p.minutes)}</span>
                 <span>{p.title}</span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-zinc-500">No plan yet.</p>
+          <p className="text-sm text-muted">No plan yet.</p>
         )}
       </Card>
       <div className="flex justify-end">
@@ -129,7 +113,7 @@ export default function DailyLog() {
     <>
       <PageHeader
         title={isToday ? 'Today' : prettyDate(day, { weekday: 'long', year: 'numeric' })}
-        subtitle={isToday ? prettyDate(day, { weekday: 'long', year: 'numeric' }) : <Link to="/log" className="text-brand-600">Jump to today</Link>}
+        subtitle={isToday ? prettyDate(day, { weekday: 'long', year: 'numeric' }) : <Link to="/log" className="text-accent-ink">Jump to today</Link>}
         action={
           <div className="flex gap-1">
             <Button variant="secondary" size="sm" onClick={() => navigate(`/log/${addDays(day, -1)}`)} aria-label="Previous day">

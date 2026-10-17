@@ -26,7 +26,9 @@ from app.services.llm.outputs import (
     DayAnalysis,
     ItemProgress,
     LinkDraft,
+    PlanDetails,
     PlanDraft,
+    Resource,
 )
 
 PLAN_BLOCK_MAX_MIN = 90
@@ -84,7 +86,8 @@ def focus_items(goal: Goal, today: date, limit: int = 4) -> list[RoadmapItem]:
 
 async def plan_for(session: AsyncSession, user_id, day: date) -> list[PlanItem]:
     rows = await session.scalars(
-        select(PlanItem).where(PlanItem.user_id == user_id, PlanItem.date_for == day).order_by(PlanItem.id)
+        select(PlanItem).where(PlanItem.user_id == user_id, PlanItem.date_for == day)
+        .order_by(PlanItem.time_block, PlanItem.id)  # chronological; "HH:MM-HH:MM" sorts as text
     )
     return list(rows)
 
@@ -145,6 +148,14 @@ def sanitize(analysis: DayAnalysis, goals: list[Goal]) -> DayAnalysis:
 
 # ---------- rule-based fallback ----------
 
+def item_details(item: RoadmapItem | None) -> PlanDetails | None:
+    if item is None:
+        return None
+    return PlanDetails(why=item.description or f"Next step on your roadmap: {item.title}.",
+                       resources=[Resource(title=r.get("title") or r.get("url", ""), url=r.get("url", ""))
+                                  for r in item.resources or [] if r.get("url") or r.get("title")])
+
+
 def pick_for_block(items: list[RoadmapItem], focus: str, used: set[int]) -> RoadmapItem | None:
     """Next roadmap item for a routine block: matching its focus (learn/build) if possible, unused first."""
     def matches(i: RoadmapItem) -> bool:
@@ -169,6 +180,7 @@ def rule_tomorrow(goals: list[Goal], budgets: dict[int, int], tomorrow: date) ->
             for b in blocks:
                 item = pick_for_block(items, b.get("focus") or "any", used)
                 plan.append(PlanDraft(
+                    details=item_details(item),
                     time_block=f"{b.get('start', '')}-{b.get('end', '')}",
                     title=f"{b.get('activity') or 'Focus'}: {item.title}" if item else (b.get("activity") or "Focus"),
                     minutes=max(commitment.block_minutes(b.get("start", ""), b.get("end", "")), 5),
@@ -254,7 +266,8 @@ async def save_plan(session: AsyncSession, user: User, day: date, blocks: list[P
     )
     for b in blocks:
         session.add(PlanItem(user_id=user.id, date_for=day, time_block=b.time_block, title=b.title,
-                             minutes=b.minutes, goal_id=b.goal_id, roadmap_item_id=b.roadmap_item_id))
+                             minutes=b.minutes, goal_id=b.goal_id, roadmap_item_id=b.roadmap_item_id,
+                             details=b.details.model_dump() if b.details else {}))
     await session.flush()
     return await plan_for(session, user.id, day)
 

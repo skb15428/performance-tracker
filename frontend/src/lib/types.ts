@@ -142,6 +142,13 @@ export type Entry = {
   review: Review | null
 }
 
+export type PlanDetails = {
+  why?: string
+  steps?: { text: string; minutes: number }[]
+  resources?: { title: string; url: string }[]
+  done_when?: string
+}
+
 export type PlanItem = {
   id: number
   date_for: string
@@ -152,6 +159,7 @@ export type PlanItem = {
   roadmap_item_id: number | null
   status: 'open' | 'done' | 'partial' | 'skipped'
   done_minutes: number | null
+  details?: PlanDetails
 }
 
 export type Replan = {
@@ -249,7 +257,17 @@ export type Dashboard = {
   } | null
   streak: number
   adherence_avg: number | null
-  today_plan: { id: number; title: string; time_block: string; minutes: number; goal_id: number | null; status: string }[]
+  today_plan: {
+    id: number
+    title: string
+    time_block: string
+    minutes: number
+    goal_id: number | null
+    roadmap_item_id: number | null
+    status: 'open' | 'done' | 'partial' | 'skipped'
+    done_minutes: number | null
+    details?: PlanDetails
+  }[]
   new_trends: number
   weekly_focus: string[]
 }

@@ -17,18 +17,18 @@ function ItemRow({ item }: { item: RoadmapItem }) {
   const overdue = item.planned_due && item.planned_due < todayIso() && !['done', 'skipped'].includes(item.status)
   const pct = Math.min((item.hours_logged / item.est_hours) * 100, 100)
   return (
-    <li className={cx('rounded-xl px-3 py-2.5 ring-1 ring-zinc-100 dark:ring-zinc-800', item.status === 'done' && 'opacity-60')}>
+    <li className={cx('rounded-2xl px-4 py-3 ring-1 ring-line', item.status === 'done' && 'opacity-60')}>
       <button className="w-full text-left" onClick={() => setOpen(!open)}>
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm">{item.status === 'done' ? '✅' : item.status === 'skipped' ? '⏭️' : '⬜'}</span>
-          <span className={cx('text-sm font-medium', item.status === 'skipped' && 'text-zinc-400 line-through')}>{item.title}</span>
+          <span className={cx('text-sm font-medium', item.status === 'skipped' && 'text-muted line-through')}>{item.title}</span>
           <Badge tone={typeTone[item.type]}>{item.type}</Badge>
           {item.source === 'trend' && <Badge tone="brand">new trend</Badge>}
           {item.status === 'in_progress' && <Badge tone="amber">in progress</Badge>}
           {overdue && <Badge tone="red">overdue</Badge>}
           {item.status !== 'done' && item.hours_logged >= item.est_hours && <Badge tone="red">over estimate</Badge>}
         </div>
-        <div className="mt-1 flex items-center gap-3 pl-6 text-xs text-zinc-500">
+        <div className="mt-1 flex items-center gap-3 pl-6 text-xs text-muted">
           <span className="tabular-nums">
             {item.hours_logged.toFixed(1)} / {item.est_hours}h
           </span>
@@ -40,13 +40,13 @@ function ItemRow({ item }: { item: RoadmapItem }) {
       </button>
       {open && (item.description || item.resources.length > 0) && (
         <div className="mt-2 space-y-2 pl-6 text-sm">
-          {item.description && <p className="text-zinc-600 dark:text-zinc-300">{item.description}</p>}
+          {item.description && <p className="text-muted">{item.description}</p>}
           {item.resources.length > 0 && (
             <ul className="space-y-1">
               {item.resources.map((r, i) => (
                 <li key={i}>
                   {r.url ? (
-                    <a className="text-brand-600 hover:underline dark:text-brand-400" href={r.url} target="_blank" rel="noreferrer">
+                    <a className="text-accent-ink hover:underline" href={r.url} target="_blank" rel="noreferrer">
                       {r.title || r.url} ↗
                     </a>
                   ) : (
@@ -73,12 +73,12 @@ function Roadmap({ goalId }: { goalId: number }) {
           key={phase.id}
           title={
             <span>
-              <span className="mr-2 text-xs text-zinc-400">PHASE {i + 1}</span>
+              <span className="mr-2 text-xs text-muted">PHASE {i + 1}</span>
               {phase.title}
             </span>
           }
           action={
-            <span className="text-xs text-zinc-500 tabular-nums">
+            <span className="text-xs text-muted tabular-nums">
               {phase.items.filter((it) => it.status === 'done').length}/{phase.items.length} · {prettyDate(phase.start_date)} –{' '}
               {prettyDate(phase.due_date)}
             </span>
@@ -101,7 +101,7 @@ function IntakeProgress({ goal }: { goal: Goal }) {
     <Card title="Goal setup">
       <ol className="mb-4 space-y-1 text-sm">
         {INTAKE_STEPS.map((step, i) => (
-          <li key={step} className={done[i] ? '' : 'text-zinc-500'}>
+          <li key={step} className={done[i] ? '' : 'text-muted'}>
             {done[i] ? '✅' : '⬜'} {i + 1}. {step}
           </li>
         ))}
@@ -121,19 +121,19 @@ export default function GoalDetail() {
 
   return (
     <>
-      <Link to="/goals" className="text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+      <Link to="/goals" className="text-sm text-muted hover:text-ink">
         ← Goals
       </Link>
       <div className="mt-2 mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight">{goal.title}</h1>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-500">
+          <h1 className="font-display text-4xl leading-[1.05] tracking-tight sm:text-5xl">{goal.title}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
             {intakeLabel(goal)}
             {goal.target_date && <span>Target {prettyDate(goal.target_date, { year: 'numeric' })}</span>}
           </div>
         </div>
         <div className="w-40">
-          <div className="mb-1 text-right text-xs text-zinc-500 tabular-nums">{Math.round(goal.progress_pct)}% done</div>
+          <div className="mb-1 text-right text-xs text-muted tabular-nums">{Math.round(goal.progress_pct)}% done</div>
           <ProgressBar value={goal.progress_pct} />
         </div>
       </div>
@@ -145,9 +145,9 @@ export default function GoalDetail() {
 
         {(goal.statement || goal.routine.length > 0) && (
           <Card>
-            {goal.statement && <p className="font-medium">{goal.statement}</p>}
+            {goal.statement && <p className="font-display text-2xl leading-snug">{goal.statement}</p>}
             {goal.success_criteria.length > 0 && (
-              <ul className="mt-1 list-disc pl-5 text-sm text-zinc-600 dark:text-zinc-300">
+              <ul className="mt-1 list-disc pl-5 text-sm text-muted">
                 {goal.success_criteria.map((c, i) => (
                   <li key={i}>{c}</li>
                 ))}
@@ -158,7 +158,7 @@ export default function GoalDetail() {
                 <span className="font-medium">
                   Routine: {goal.hours_per_day}h × {goal.days_per_week} days/week
                 </span>
-                <ul className="mt-1 space-y-0.5 text-xs text-zinc-500">
+                <ul className="mt-1 space-y-0.5 text-xs text-muted">
                   {goal.routine.map((b, i) => (
                     <li key={i} className="tabular-nums">
                       {b.days.map((d) => d[0].toUpperCase() + d.slice(1)).join(', ')} · {b.start}–{b.end} · {b.activity}

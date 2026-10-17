@@ -68,12 +68,25 @@ class ItemProgress(BaseModel):
     completed: bool = False
 
 
+class PlanStep(BaseModel):
+    text: str = Field(description="One concrete action, e.g. 'Read sections 1-3 of The Illustrated Transformer'")
+    minutes: int = Field(default=15, ge=1, le=600)
+
+
+class PlanDetails(BaseModel):
+    why: str = Field(default="", description="One sentence: why this block matters for the goal right now")
+    steps: list[PlanStep] = Field(default=[], description="2-5 ordered steps whose minutes add up to the block")
+    resources: list[Resource] = Field(default=[], description="Links to use in this block")
+    done_when: str = Field(default="", description="A checkable finish line, e.g. 'output matches PyTorch to 1e-6'")
+
+
 class PlanDraft(BaseModel):
     time_block: str = Field(default="", description="e.g. 09:00-10:30")
-    title: str
+    title: str = Field(description="Short task name, max ~8 words, e.g. 'Attention from scratch'")
     minutes: int = Field(default=60, ge=5, le=720)
     goal_id: int | None = None
     roadmap_item_id: int | None = None
+    details: PlanDetails | None = None
 
 
 class DayAnalysis(BaseModel):

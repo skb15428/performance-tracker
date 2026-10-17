@@ -18,10 +18,8 @@ export default function OpenClaude({
       target="_blank"
       rel="noreferrer"
       className={cx(
-        'inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors',
-        variant === 'primary'
-          ? 'bg-brand-600 text-white hover:bg-brand-700'
-          : 'bg-white text-zinc-800 ring-1 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-zinc-700 dark:hover:bg-zinc-800',
+        'inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition',
+        variant === 'primary' ? 'bg-ink text-canvas shadow-sm hover:opacity-90' : 'bg-surface text-ink ring-1 ring-line hover:bg-surface-2',
         className,
       )}
     >

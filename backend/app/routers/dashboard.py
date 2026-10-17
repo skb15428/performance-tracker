@@ -95,7 +95,8 @@ async def summary(days: int = 30, user: User = Depends(current_user), session: A
         "streak": await streak_before(session, user.id, today) + (1 if logged_today else 0),
         "adherence_avg": round(sum(adherence) / len(adherence), 2) if adherence else None,
         "today_plan": [{"id": p.id, "title": p.title, "time_block": p.time_block, "minutes": p.minutes,
-                        "goal_id": p.goal_id, "status": p.status} for p in today_plan],
+                        "goal_id": p.goal_id, "roadmap_item_id": p.roadmap_item_id, "status": p.status,
+                        "done_minutes": p.done_minutes, "details": p.details or {}} for p in today_plan],
         "new_trends": new_trends or 0,
         "weekly_focus": await weekly.current_focus(session, user, today),
     }

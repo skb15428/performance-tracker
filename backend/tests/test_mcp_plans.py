@@ -44,6 +44,18 @@ async def test_plan_day_edit_plan_and_clashes():
         again = await call(session, "plan_day")
         assert not again["created_now"] and len(again["plan"]) == 2  # doesn't duplicate
 
+        # Structured block: short title + why, timed steps, resources, done_when
+        details = {"why": "Attention is the core of every LLM", "done_when": "Output matches PyTorch on 4 tokens",
+                   "steps": [{"text": "Read The Illustrated Transformer", "minutes": 45},
+                             {"text": "Implement attention + causal mask in NumPy", "minutes": 45}],
+                   "resources": [{"title": "The Illustrated Transformer",
+                                  "url": "https://jalammar.github.io/illustrated-transformer/"}]}
+        structured = await call(session, "edit_plan", update=[
+            {"plan_item_id": plan["plan"][0]["plan_item_id"], "title": "Attention from scratch", "details": details}])
+        assert structured["plan"][0]["details"]["steps"][1]["minutes"] == 45
+        assert structured["plan"][0]["details"]["resources"][0]["url"].startswith("https://jalammar")
+        assert (await call(session, "get_overview"))["today_plan"][0]["details"]["done_when"].startswith("Output")
+
         # The day changes: rename to a concrete task, shorten the evening block, add a block, then drop one
         first, second = plan["plan"]
         edited = await call(session, "edit_plan", update=[

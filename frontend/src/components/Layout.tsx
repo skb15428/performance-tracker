@@ -53,10 +53,10 @@ export default function Layout({ onLogout }: { onLogout: () => void }) {
 
   return (
     <div className="min-h-dvh md:flex">
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-zinc-200 bg-white px-3 py-5 md:flex dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mb-6 flex items-center gap-2 px-2">
-          <img src="/favicon.svg" alt="" className="size-8" />
-          <span className="text-lg font-bold tracking-tight">GoalCoach</span>
+      <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col px-4 py-6 md:flex">
+        <div className="mb-8 flex items-center gap-2.5 px-3">
+          <img src="/favicon.svg" alt="" className="size-8 rounded-xl" />
+          <span className="font-display text-2xl tracking-tight">GoalCoach</span>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map((n) => (
@@ -66,41 +66,46 @@ export default function Layout({ onLogout }: { onLogout: () => void }) {
               end={n.end}
               className={({ isActive }) =>
                 cx(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-brand-50 text-brand-700 dark:bg-brand-700/20 dark:text-brand-100'
-                    : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                  'flex items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium transition',
+                  isActive ? 'bg-ink text-canvas shadow-sm' : 'text-muted hover:bg-surface hover:text-ink',
                 )
               }
             >
               <Icon name={n.icon} />
               <span className="flex-1">{n.label}</span>
-              {badge(n.icon) > 0 && <span className="rounded-full bg-brand-600 px-1.5 text-xs text-white">{badge(n.icon)}</span>}
+              {badge(n.icon) > 0 && <span className="rounded-full bg-accent px-1.5 text-[11px] font-semibold text-white">{badge(n.icon)}</span>}
             </NavLink>
           ))}
         </nav>
-        <button onClick={onLogout} className="rounded-lg px-3 py-2 text-left text-sm text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+        <div className="rounded-3xl border border-line bg-surface p-4 text-xs text-muted">
+          <p className="mb-1 font-semibold text-ink">Your coach lives in Claude</p>
+          Log your day, plan and replan by chatting with Claude. This dashboard shows the results.
+        </div>
+        <button onClick={onLogout} className="mt-3 rounded-full px-4 py-2 text-left text-sm text-muted hover:bg-surface hover:text-ink">
           Log out
         </button>
       </aside>
 
-      <main className="mx-auto w-full max-w-5xl px-4 pt-5 pb-28 sm:px-6 md:pb-10 md:pt-8">
+      <main className="bg-glow mx-auto w-full max-w-6xl px-4 pt-6 pb-32 sm:px-8 md:rounded-l-[2rem] md:border-l md:border-line md:bg-surface/40 md:pt-10 md:pb-12">
         <Outlet />
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-zinc-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden dark:border-zinc-800 dark:bg-zinc-900/95">
+      <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 grid grid-cols-6 rounded-full border border-line bg-surface/80 p-1.5 shadow-lg shadow-black/5 backdrop-blur-xl md:hidden">
         {NAV.map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
             end={n.end}
             className={({ isActive }) =>
-              cx('relative flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium', isActive ? 'text-brand-600 dark:text-brand-400' : 'text-zinc-500')
+              cx(
+                'relative flex flex-col items-center gap-0.5 rounded-full py-1.5 text-[10px] font-medium transition',
+                isActive ? 'bg-ink text-canvas' : 'text-muted',
+              )
             }
           >
             <Icon name={n.icon} />
             <span className="truncate">{n.label.split(' ')[0]}</span>
-            {badge(n.icon) > 0 && <span className="absolute top-1 right-1/4 size-2 rounded-full bg-brand-600" />}
+            {badge(n.icon) > 0 && <span className="absolute top-1 right-1/4 size-2 rounded-full bg-accent" />}
           </NavLink>
         ))}
       </nav>

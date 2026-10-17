@@ -254,6 +254,7 @@ class PlanItemOut(ORM):
     roadmap_item_id: int | None
     status: str
     done_minutes: int | None = None
+    details: dict = {}
 
 
 class PlanItemIn(BaseModel):

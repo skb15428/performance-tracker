@@ -214,6 +214,8 @@ class PlanItem(Base):
     roadmap_item_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_items.id", ondelete="SET NULL"))
     status: Mapped[str] = mapped_column(String(10), default="open")  # open/done/partial/skipped
     done_minutes: Mapped[int | None] = mapped_column(Integer)  # for partial: how much of the block was done
+    # How to do the block: {"why", "steps": [{"text", "minutes"}], "resources": [{"title", "url"}], "done_when"}
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class TrendSource(Base):

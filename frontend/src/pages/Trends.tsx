@@ -26,7 +26,7 @@ function Sources() {
   })
   return (
     <Card title="Sources" className="mt-8">
-      <p className="mb-3 text-xs text-zinc-500">
+      <p className="mb-3 text-xs text-muted">
         Feeds are pulled daily and matched against what you're currently studying. The weekly scan also searches the web for anything the feeds missed.
       </p>
       <ul className="mb-4 space-y-1 text-sm">
@@ -39,11 +39,11 @@ function Sources() {
                 remove
               </button>
             ) : (
-              <span className="text-xs text-zinc-400">default</span>
+              <span className="text-xs text-muted">default</span>
             )}
           </li>
         ))}
-        {!sources.length && <li className="text-zinc-500">Default sources are added on the first daily ingest.</li>}
+        {!sources.length && <li className="text-muted">Default sources are added on the first daily ingest.</li>}
       </ul>
       <form
         className="grid gap-2 sm:grid-cols-[7rem_1fr_2fr_auto]"
@@ -97,19 +97,19 @@ export default function Trends() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <h3 className="font-semibold">{s.title}</h3>
+                  <h3 className="font-display text-2xl leading-tight">{s.title}</h3>
                   <Badge tone="brand">{goalTitle(s.goal_id)}</Badge>
                   <Badge>~{s.est_hours}h</Badge>
                 </div>
-                <p className="text-sm text-zinc-600 dark:text-zinc-300">{s.why_relevant}</p>
+                <p className="text-sm text-muted">{s.why_relevant}</p>
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
                   {s.links.map((l, i) => (
-                    <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline dark:text-brand-400">
+                    <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">
                       {l.title || new URL(l.url).hostname} ↗
                     </a>
                   ))}
                 </div>
-                <p className="mt-2 text-xs text-zinc-400">Found {prettyDate(s.created_at)}</p>
+                <p className="mt-2 text-xs text-muted">Found {prettyDate(s.created_at)}</p>
               </div>
               <div className="flex gap-2">
                 <Button variant="ghost" size="sm" onClick={() => act.mutate({ id: s.id, action: 'dismiss' })}>

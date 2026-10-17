@@ -28,9 +28,9 @@ export default function Login({ onDone }: { onDone: () => void }) {
         <div className="mb-8 text-center">
           <img src="/favicon.svg" alt="" className="mx-auto mb-3 size-12" />
           <h1 className="text-2xl font-bold tracking-tight">GoalCoach</h1>
-          <p className="mt-1 text-sm text-zinc-500">Your progress at a glance. Coaching happens in Claude.</p>
+          <p className="mt-1 text-sm text-muted">Your progress at a glance. Coaching happens in Claude.</p>
         </div>
-        <form onSubmit={submit} className="space-y-4 rounded-2xl bg-white p-6 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800">
+        <form onSubmit={submit} className="space-y-4 rounded-2xl bg-white p-6 ring-1 ring-line">
           <label className="block">
             <Label>Email</Label>
             <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />

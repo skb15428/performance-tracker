@@ -39,10 +39,10 @@ export default function Goals() {
           <Link key={g.id} to={`/goals/${g.id}`} className="group">
             <Card className="h-full transition group-hover:ring-brand-400">
               <div className="mb-2 flex items-start justify-between gap-2">
-                <h3 className="font-semibold leading-snug">{g.title}</h3>
+                <h3 className="font-display text-2xl leading-tight">{g.title}</h3>
                 {intakeLabel(g)}
               </div>
-              <div className="mb-4 flex flex-wrap gap-1.5 text-xs text-zinc-500">
+              <div className="mb-4 flex flex-wrap gap-1.5 text-xs text-muted">
                 <Badge>{g.category}</Badge>
                 <Badge>Priority {g.priority}</Badge>
                 {g.status !== 'active' && <Badge tone="amber">{g.status}</Badge>}
@@ -50,7 +50,7 @@ export default function Goals() {
               </div>
               <div className="flex items-center gap-3">
                 <ProgressBar value={g.progress_pct} />
-                <span className="text-xs tabular-nums text-zinc-500">{Math.round(g.progress_pct)}%</span>
+                <span className="text-xs tabular-nums text-muted">{Math.round(g.progress_pct)}%</span>
               </div>
             </Card>
           </Link>

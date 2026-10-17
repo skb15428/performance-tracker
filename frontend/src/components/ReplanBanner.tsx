@@ -57,7 +57,7 @@ export default function ReplanBanner({ goalId }: { goalId?: number }) {
                 <li key={c.item_id} className="flex flex-wrap items-center gap-2">
                   {c.action === 'skip' ? <Badge tone="red">skip</Badge> : <Badge>move</Badge>}
                   <span className="flex-1">{c.title}</span>
-                  <span className="text-xs text-zinc-500 tabular-nums">
+                  <span className="text-xs text-muted tabular-nums">
                     {prettyDate(c.old_due)} → {c.action === 'skip' ? '—' : prettyDate(c.new_due)}
                   </span>
                 </li>
