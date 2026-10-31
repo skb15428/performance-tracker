@@ -20,8 +20,8 @@ class SettingsOut(BaseModel):
     morning_push: bool
     daily_available_hours: float
     email_reminders: bool = True
-    has_own_key: bool
-    server_llm_available: bool
+    email_enabled: bool = False
+    calendar_token: str | None = None
     vapid_public_key: str
 
 
@@ -32,7 +32,11 @@ class SettingsIn(BaseModel):
     morning_push: bool | None = None
     email_reminders: bool | None = None
     daily_available_hours: float | None = Field(default=None, gt=0, le=16)
-    gemini_api_key: str | None = None  # "" clears it
+
+
+class PasswordIn(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class PushSubIn(BaseModel):
@@ -128,6 +132,8 @@ class RoadmapItemOut(ORM):
     hours_logged: float
     completed_at: date | None
     source: str
+    proof: str = "deliverable"
+    proof_links: list = []
 
 
 class RoadmapPhaseOut(ORM):
@@ -240,6 +246,11 @@ class DraftOut(BaseModel):
     used_llm: bool
 
 
+class DayTypeIn(BaseModel):
+    day_type: Literal["rest", "work"] | None
+    goal_id: int | None = None
+
+
 class ConfirmIn(BaseModel):
     analysis: DayAnalysis
     used_llm: bool = True
@@ -275,6 +286,82 @@ class PlanPatch(BaseModel):
     time_block: str | None = None
     minutes: int | None = None
     done_steps: list[int] | None = None  # indexes of the block's steps the user has ticked off
+
+
+class TimeLogIn(BaseModel):
+    day: date
+    goal_id: int
+    minutes: int = Field(ge=1, le=960)
+    roadmap_item_id: int | None = None
+    note: str = ""
+
+
+class TimeLogOut(ORM):
+    id: int
+    day: date
+    goal_id: int
+    roadmap_item_id: int | None
+    minutes: int
+    note: str
+    source: str
+
+
+JobStage = Literal["saved", "applied", "screen", "technical", "final", "offer", "rejected", "withdrawn"]
+
+
+JOB_URL = r"^(https?://.*)?$"
+
+
+class ApplicationIn(BaseModel):
+    company: str = Field(min_length=1, max_length=200)
+    role: str = ""
+    url: str = Field(default="", pattern=JOB_URL, max_length=2000)
+    referral: str = ""
+    stage: JobStage = "saved"
+    next_step: str = ""
+    notes: str = ""
+
+
+class ApplicationPatch(BaseModel):
+    company: str | None = None
+    role: str | None = None
+    url: str | None = Field(default=None, pattern=JOB_URL, max_length=2000)
+    referral: str | None = None
+    stage: JobStage | None = None
+    next_step: str | None = None
+    notes: str | None = None
+
+
+class ApplicationOut(ORM):
+    id: int
+    company: str
+    role: str
+    url: str
+    referral: str
+    stage: str
+    reached_final: bool
+    applied_on: date | None
+    next_step: str
+    notes: str
+    updated_at: datetime
+
+
+class ProofLinkIn(BaseModel):
+    title: str = Field(default="", max_length=200)
+    url: str = Field(pattern=r"^https?://", max_length=2000)
+
+
+class MetricIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    unit: str = ""
+    start_value: float = 0
+    target_value: float
+    source: Literal["applications", "final_rounds", "offers", "proof_links"] | None = None
+
+
+class MetricLogIn(BaseModel):
+    value: float | None = None  # a new reading; leave it out to add 1
+    day: date | None = None
 
 
 # ----- replans / trends / reviews -----

@@ -8,6 +8,7 @@ from app.core.auth import current_user
 from app.core.db import get_session
 from app.models import PlanItem, User
 from app.schemas import PlanItemIn, PlanItemOut, PlanPatch
+from app.services import timelogs
 
 router = APIRouter(prefix="/plan", tags=["plan"])
 
@@ -43,8 +44,12 @@ async def update_plan_item(item_id: int, body: PlanPatch, user: User = Depends(c
     item = await _get(session, item_id, user)
     data = body.model_dump(exclude_unset=True)
     done_steps = data.pop("done_steps", None)
+    if data.get("status") == "done" and "done_minutes" not in data:
+        item.done_minutes = None  # the whole block, not an earlier partial amount
     for k, v in data.items():
         setattr(item, k, v)
+    if "status" in data or "done_minutes" in data:
+        await timelogs.sync_block(session, user, item)
     if done_steps is not None:
         ticked = set(done_steps)
         steps = [{**step, "done": i in ticked} for i, step in enumerate((item.details or {}).get("steps", []))]
@@ -56,5 +61,8 @@ async def update_plan_item(item_id: int, body: PlanPatch, user: User = Depends(c
 @router.delete("/{item_id}", status_code=204)
 async def delete_plan_item(item_id: int, user: User = Depends(current_user),
                            session: AsyncSession = Depends(get_session)):
-    await session.delete(await _get(session, item_id, user))
+    item = await _get(session, item_id, user)
+    item.status = "open"
+    await timelogs.sync_block(session, user, item)
+    await session.delete(item)
     await session.commit()

@@ -66,7 +66,8 @@ class GoalImpact(BaseModel):
 
 class ItemProgress(BaseModel):
     roadmap_item_id: int
-    hours: float = Field(ge=0, le=24)
+    hours: float = Field(ge=0, le=24, description="All hours on this item that day. Time already logged in the app or "
+                                                  "by interviews is subtracted automatically, so it can't count twice")
     completed: bool = False
 
 
@@ -80,6 +81,7 @@ class PlanDetails(BaseModel):
     steps: list[PlanStep] = Field(default=[], description="2-5 ordered steps whose minutes add up to the block")
     resources: list[Resource] = Field(default=[], description="Links to use in this block")
     done_when: str = Field(default="", description="A checkable finish line, e.g. 'output matches PyTorch to 1e-6'")
+    topic_id: int | None = Field(default=None, description="The study topic this block covers; keep it when editing")
 
 
 class PlanDraft(BaseModel):

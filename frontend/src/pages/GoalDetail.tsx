@@ -1,10 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Link, useParams } from 'react-router-dom'
 import OpenClaude from '../components/OpenClaude'
 import ReplanBanner from '../components/ReplanBanner'
-import { Badge, Card, EmptyState, ErrorText, Loading, ProgressBar, cx } from '../components/ui'
+import { Badge, Button, Card, EmptyState, ErrorText, Input, Label, Loading, ProgressBar, Select, cx } from '../components/ui'
 import type { Tone } from '../components/ui'
 import { api } from '../lib/api'
 import { prettyDate, todayIso } from '../lib/dates'
@@ -13,6 +13,50 @@ import { intakeLabel } from './Goals'
 
 const typeTone = { topic: 'brand', skill: 'green', task: 'amber', milestone: 'red' } as const
 const INTAKE_STEPS = ['Exact goal', 'Roadmap', 'Timeline + daily routine'] as const
+
+function ProofLinks({ item }: { item: RoadmapItem }) {
+  const qc = useQueryClient()
+  const [url, setUrl] = useState('')
+  const refresh = () => qc.invalidateQueries()
+  const add = useMutation({
+    mutationFn: () => api(`/goals/roadmap/items/${item.id}/links`, { method: 'POST', json: { url } }),
+    onSuccess: () => {
+      setUrl('')
+      refresh()
+    },
+  })
+  const remove = useMutation({ mutationFn: (i: number) => api(`/goals/roadmap/items/${item.id}/links/${i}`, { method: 'DELETE' }), onSuccess: refresh })
+  return (
+    <div>
+      {item.proof_links.length > 0 && (
+        <ul className="mb-2 space-y-1">
+          {item.proof_links.map((l, i) => (
+            <li key={i} className="flex items-center justify-between gap-2">
+              <a className="min-w-0 truncate text-accent-ink hover:underline" href={l.url} target="_blank" rel="noreferrer">
+                {l.title || l.url} ↗
+              </a>
+              <button aria-label="Remove this link" className="text-muted hover:text-ink" onClick={() => remove.mutate(i)}>
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          add.mutate()
+        }}
+      >
+        <Input type="url" required aria-label="Link to your work" placeholder="Link to your work (repo, blog, demo)" value={url} onChange={(e) => setUrl(e.target.value)} className="min-w-0 flex-1" />
+        <Button type="submit" size="sm" variant="secondary" loading={add.isPending}>
+          Add
+        </Button>
+      </form>
+    </div>
+  )
+}
 
 function ItemRow({ item, study }: { item: RoadmapItem; study?: { passed: number; total: number } }) {
   const [open, setOpen] = useState(false)
@@ -41,7 +85,7 @@ function ItemRow({ item, study }: { item: RoadmapItem; study?: { passed: number;
           </span>
         </div>
       </button>
-      {open && (item.description || item.resources.length > 0) && (
+      {open && (
         <div className="mt-2 space-y-2 pl-6 text-sm">
           {item.description && <p className="text-muted">{item.description}</p>}
           {item.resources.length > 0 && (
@@ -59,6 +103,7 @@ function ItemRow({ item, study }: { item: RoadmapItem; study?: { passed: number;
               ))}
             </ul>
           )}
+          <ProofLinks item={item} />
         </div>
       )}
     </li>
@@ -74,6 +119,15 @@ const METRIC_STATE: Record<Metric['state'], { label: string; tone: Tone }> = {
 }
 
 function MetricCard({ metric }: { metric: Metric }) {
+  const qc = useQueryClient()
+  const [value, setValue] = useState('')
+  const log = useMutation({
+    mutationFn: (json: { value?: number }) => api(`/study/metrics/${metric.id}/log`, { method: 'POST', json }),
+    onSuccess: () => {
+      setValue('')
+      qc.invalidateQueries()
+    },
+  })
   const state = METRIC_STATE[metric.state]
   const axis = { stroke: 'var(--chart-axis)', fontSize: 11, tickLine: false, axisLine: false }
   const points = [{ day: metric.start_date, value: metric.start_value }, ...metric.entries.filter((e) => e.day !== metric.start_date)]
@@ -94,6 +148,25 @@ function MetricCard({ metric }: { metric: Metric }) {
         </span>
       </div>
       <ProgressBar value={metric.progress_pct} className="mt-3" />
+      {metric.source ? (
+        <p className="mt-2 text-xs text-muted">This one counts itself.</p>
+      ) : (
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            log.mutate({ value: Number(value) })
+          }}
+        >
+          <Input aria-label={`New value for ${metric.name}`} type="number" step="any" required value={value} onChange={(e) => setValue(e.target.value)} placeholder="New value" className="w-28" />
+          <Button type="submit" size="sm" variant="secondary" loading={log.isPending}>
+            Save
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => log.mutate({})}>
+            +1
+          </Button>
+        </form>
+      )}
       {metric.entries.length > 0 && (
         <div className="mt-4 h-36">
           <ResponsiveContainer>
@@ -112,6 +185,82 @@ function MetricCard({ metric }: { metric: Metric }) {
           </ResponsiveContainer>
         </div>
       )}
+    </Card>
+  )
+}
+
+const AUTO_SOURCES = [
+  { id: '', label: 'I log it myself' },
+  { id: 'applications', label: 'Count my applications' },
+  { id: 'final_rounds', label: 'Count final rounds reached' },
+  { id: 'offers', label: 'Count offers' },
+  { id: 'proof_links', label: 'Count links to my work' },
+]
+
+function AddTarget({ goalId }: { goalId: number }) {
+  const qc = useQueryClient()
+  const blank = { name: '', unit: '', start_value: '0', target_value: '', source: '' }
+  const [form, setForm] = useState(blank)
+  const [open, setOpen] = useState(false)
+  const add = useMutation({
+    mutationFn: () =>
+      api(`/study/goals/${goalId}/metrics`, {
+        method: 'POST',
+        json: { name: form.name, unit: form.unit, start_value: Number(form.start_value), target_value: Number(form.target_value), source: form.source || null },
+      }),
+    onSuccess: () => {
+      setForm(blank)
+      setOpen(false)
+      qc.invalidateQueries()
+    },
+  })
+  if (!open)
+    return (
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+        Add a target
+      </Button>
+    )
+  return (
+    <Card title="Add a target">
+      <form
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          add.mutate()
+        }}
+      >
+        <label>
+          <Label>Name</Label>
+          <Input required placeholder="Mock interviews" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </label>
+        <label>
+          <Label>How it's counted</Label>
+          <Select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })}>
+            {AUTO_SOURCES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label>
+          <Label>Start</Label>
+          <Input type="number" step="any" required value={form.start_value} onChange={(e) => setForm({ ...form, start_value: e.target.value })} />
+        </label>
+        <label>
+          <Label>Target</Label>
+          <Input type="number" step="any" required value={form.target_value} onChange={(e) => setForm({ ...form, target_value: e.target.value })} />
+        </label>
+        <div className="flex items-center gap-2 sm:col-span-2">
+          <Button type="submit" size="sm" loading={add.isPending}>
+            Add target
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+      <ErrorText error={add.error} />
     </Card>
   )
 }
@@ -185,6 +334,19 @@ function Roadmap({ goalId }: { goalId: number }) {
   return (
     <div className="space-y-4">
       {study?.metrics.map((m) => <MetricCard key={m.id} metric={m} />)}
+      <div className="flex flex-wrap items-start gap-2">
+        <AddTarget goalId={goalId} />
+        <Link to="/job-search">
+          <Button size="sm" variant="secondary">
+            Job search
+          </Button>
+        </Link>
+        <Link to="/proof">
+          <Button size="sm" variant="secondary">
+            Proof
+          </Button>
+        </Link>
+      </div>
       <Journey phases={data.phases} />
       {data.phases.map((phase, i) => (
         <Card
@@ -251,7 +413,7 @@ export default function GoalDetail() {
           </div>
         </div>
         <div className="w-40">
-          <div className="mb-1 text-right text-xs text-muted tabular-nums">{Math.round(goal.progress_pct)}% done</div>
+          <div className="mb-1 text-right text-xs text-muted tabular-nums">{Math.round(goal.progress_pct)}% proven</div>
           <ProgressBar value={goal.progress_pct} />
         </div>
       </div>

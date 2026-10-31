@@ -13,7 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,11 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     gemini_key_enc: Mapped[str | None] = mapped_column(Text)
     last_reminded_on: Mapped[date | None] = mapped_column(Date)
     email_reminders: Mapped[bool] = mapped_column(default=True)
+    last_morning_on: Mapped[date | None] = mapped_column(Date)  # the morning plan was sent
+    last_weekly_nudge_on: Mapped[date | None] = mapped_column(Date)  # the weekly review reminder was sent
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    calendar_token: Mapped[str | None] = mapped_column(String(64), index=True)  # secret part of the calendar feed URL
 
 
 class PushSubscription(Base):
@@ -132,6 +137,7 @@ class RoadmapItem(Base):
     search_terms: Mapped[list] = mapped_column(JSON, default=list)  # phrases/synonyms for finding news on it
     # How progress is proven: interview (knowledge), log (physical/habit), deliverable (projects, tasks)
     proof: Mapped[str] = mapped_column(String(12), default="deliverable")
+    proof_links: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")  # [{title, url}] of finished work
 
     phase: Mapped[RoadmapPhase] = relationship(back_populates="items")
 
@@ -146,6 +152,8 @@ class DailyEntry(Base):
     schedule: Mapped[list] = mapped_column(JSON, default=list)  # [{start, end, activity, notes}]
     free_text: Mapped[str] = mapped_column(Text, default="")
     energy: Mapped[int | None] = mapped_column(Integer)
+    day_type: Mapped[str | None] = mapped_column(String(10))  # rest/work if the user overrode the routine for this day
+    goal_day_types: Mapped[dict | None] = mapped_column(JSON)  # the same for one goal only: {goal_id: rest/work}
     draft: Mapped[dict | None] = mapped_column(JSON)  # last analysis draft awaiting confirmation
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -367,6 +375,8 @@ class GoalMetric(Base):
     start_value: Mapped[float] = mapped_column(Float)
     target_value: Mapped[float] = mapped_column(Float)
     start_date: Mapped[date] = mapped_column(Date)
+    # Counted automatically instead of logged by hand: applications, final_rounds, offers or proof_links.
+    source: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -380,3 +390,60 @@ class MetricEntry(Base):
     value: Mapped[float] = mapped_column(Float)
     note: Mapped[str] = mapped_column(Text, default="")
 
+
+class TimeLog(Base):
+    """Time spent on a goal, recorded as it happens: a block marked done, the focus timer, an interview or a manual
+    entry. It credits the roadmap straight away, so progress doesn't wait for the nightly review."""
+
+    __tablename__ = "time_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    roadmap_item_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_items.id", ondelete="SET NULL"))
+    plan_item_id: Mapped[int | None] = mapped_column(ForeignKey("plan_items.id", ondelete="SET NULL"), index=True)
+    minutes: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(10), default="manual")  # manual/block/interview
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WeekPlan(Base):
+    """The minutes the routine set for each day of a finished week, so later routine changes can't rewrite old scores."""
+
+    __tablename__ = "week_plans"
+    __table_args__ = (UniqueConstraint("goal_id", "week_start"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    week_start: Mapped[date] = mapped_column(Date)
+    minutes: Mapped[dict] = mapped_column(JSON, default=dict)  # {"2026-11-02": 120, ...}
+
+
+class JobApplication(Base):
+    __tablename__ = "job_applications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    company: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(200), default="")
+    url: Mapped[str] = mapped_column(Text, default="")
+    referral: Mapped[str] = mapped_column(String(200), default="")  # who referred the user, if anyone
+    stage: Mapped[str] = mapped_column(String(12), default="saved")  # saved/applied/screen/technical/final/offer/rejected/withdrawn
+    reached_final: Mapped[bool] = mapped_column(default=False, server_default=false())  # stays true after a rejection
+    applied_on: Mapped[date | None] = mapped_column(Date)
+    next_step: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AppEvent(Base):
+    """What the app did by itself, for the Settings status card: scheduler runs, backups and errors."""
+
+    __tablename__ = "app_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20), index=True)  # heartbeat/daily/backup/error
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

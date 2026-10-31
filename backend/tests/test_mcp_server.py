@@ -38,7 +38,6 @@ async def test_mcp_end_to_end():
         "HOME": os.environ.get("HOME", ""),
         "DATABASE_URL": f"sqlite+aiosqlite:///{db}",
         "OWNER_EMAIL": "owner@example.com",
-        "GEMINI_API_KEY": "",
     }
     params = StdioServerParameters(command=sys.executable, args=["-m", "app.mcp_server"], cwd=str(BACKEND), env=env)
 
@@ -108,28 +107,30 @@ async def test_mcp_end_to_end():
                           "roadmap_item_id": rag_id}],
             "tip": "Phone out of the bedroom",
         }, schedule=[{"start": "07:00", "end": "08:30", "activity": "Read RAG paper"}], notes="Good day", energy=4)
-        assert saved["score"] > 0 and saved["per_goal"][str(gid)]["llm"] == 6
+        assert saved["per_goal"][str(gid)]["llm"] == 6 and "score" not in saved  # the score is weekly
+        assert saved["this_week"]["score"] > 0 and saved["this_week"]["hours_done"] == 1.5
         assert saved["off_goal_minutes"] == 45  # job is neutral, scrolling is waste
         assert saved["tomorrow_plan"][0]["title"] == "Build toy retriever"
 
-        assert saved["score_explanation"].endswith(f"= {saved['score']}")
+        assert saved["this_week"]["explanation"].endswith(f"= {saved['this_week']['score']}")
 
         overview = await call(session, "get_overview")
         assert overview["today_logged"] and overview["streak_days"] == 1 and overview["unlogged_days"] == []
 
-        # Next day: half of the planned block done -> partial credit in the plan part of the score
+        # Next day: half of the planned block done -> recorded as partial
         tomorrow = str(today + timedelta(days=1))
         plan = (await call(session, "get_day_context", day=tomorrow))["plan_for_this_day"]
         nxt = await call(session, "save_day_review", day=tomorrow, review={
             "activities": [{"description": "Retriever", "minutes": 45, "kind": "build",
                             "links": [{"goal_id": gid, "roadmap_item_id": rag_id}]}]},
             plan_status=[{"plan_item_id": plan[0]["plan_item_id"], "status": "partial", "done_minutes": 45}])
-        assert nxt["breakdown"]["plan_adherence"] == 0.5
+        assert nxt["plan_adherence"] == 0.5
 
-        # A day off is recorded but not scored
+        # A day off is recorded and marked as a rest day
         off = await call(session, "save_day_review", day=str(today - timedelta(days=1)), day_off=True,
                          review={"activities": []}, notes="Sick")
-        assert off["rest_day"] and off["score"] is None
+        assert off["rest_day"]
+        assert (await call(session, "get_day_context", day=str(today - timedelta(days=1))))["day_type"] == "rest"
 
         preview = await call(session, "preview_replan", goal_id=gid, strategy="reduce_scope",
                              reason="Protect the deadline", skip_item_ids=[rm["phases"][0]["items"][1]["id"]])

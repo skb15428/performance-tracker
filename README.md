@@ -9,7 +9,7 @@ It flags when you fall behind and proposes a replan. It also surfaces new develo
 
 - **Backend**: FastAPI, SQLAlchemy (async), Postgres, Alembic, fastapi-users (JWT)
 - **Frontend**: a read-only dashboard (React, Vite, TypeScript, Tailwind, TanStack Query, Recharts). It installs as a PWA with push reminders that open Claude. Coaching itself happens in Claude through the MCP server.
-- **LLM**: Google Gemini free tier, behind a provider interface (`backend/app/services/llm/`). Every feature falls back to rules when no key is configured or the quota runs out.
+- **Coach**: Claude, through the MCP server. The app has no model of its own and uses simple rules where it acts alone.
 
 ## How progress is proven
 
@@ -20,22 +20,33 @@ Each roadmap item has a proof type:
 
 ## How scoring works
 
-For each goal, on a 0–10 scale:
-- **Rule score** = minutes × activity-kind weight × relevance, compared against the goal's share of your daily hours. Your daily hours are split across goals by priority.
-- **AI impact** = the LLM's 0–10 judgement of real progress.
-- **Goal score** = the average of the two, or the rule score alone without an LLM.
+The score is weekly, out of 100, so you can spread your hours however you like. Four hours today and nothing tomorrow is fine.
 
-The daily score (0–100) is built from the per-goal scores:
-1. Take the priority-weighted average of goal scores.
-2. Blend in 30% for how well the time was used, judged by Claude, so valuable off-plan work isn't penalised. Rules-only days use 20% plan adherence instead.
-3. Subtract up to 15 points for wasted time.
-4. Add up to 5 points for your logging streak.
+- **Hours set the ceiling:** hours done against the week's target. Extra hours can't take you past 100%, and low-value work counts for less: relevance, and kinds such as admin.
+- **Quality decides how much of it you keep:** Claude's rating of the work, 70% progress on the goal and 30% how well the time was used. The poorest work keeps half of what the hours earned, and the best keeps all of it. Quality scales the hours rather than adding to them, so one great hour in a twelve-hour week still scores low.
+- **Wasted time:** minus 1 point per hour, up to 15.
+
+Goals are weighted by priority. While a week is running, the score compares your hours with what was expected up to your last logged day.
+
+Each day still gets a review from Claude: the good, the bad and tomorrow's plan. Its daily rating is only used to spot patterns.
 
 `job` (your day job) and `leisure` are neutral; untagged other time counts as "off-goal" drift.
 
+## Flexible days
+
+Tap a day in the week strip, or tell Claude:
+
+- **Make it a rest day:** the day's open blocks are set aside and its hours come off the week's target, so it can't lower your score. Your roadmap dates don't move, so too many rest days will show up as falling behind.
+- **Make it a work day:** a rest day gets a usual day's time and a plan. It can't raise the week's target above your routine's total.
+- **Back to normal:** undoes either, and brings set-aside blocks back.
+
+A day with no work only shows as missed if the week is behind. Otherwise it shows as covered.
+
+The Study page shows your next topics, the coming days and the roadmap ahead, and any topic can be started early. Work on a rest day counts toward the week.
+
 ## Use with Claude Desktop (local, single user)
 
-Claude acts as the coach. `backend/app/mcp_server.py` is a local MCP server with 21 tools: goals, roadmap, day review, timeline/replan, trends and weekly review. It stores everything in `backend/goalcoach.db` (SQLite) and runs the scheduling and scoring rules. No Gemini key is needed.
+Claude acts as the coach. `backend/app/mcp_server.py` is a local MCP server: goals, roadmap, day review, timeline/replan, trends and weekly review. It stores everything in `backend/goalcoach.db` (SQLite) and runs the scheduling and scoring rules. No Gemini key is needed.
 
 Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Claude Desktop:
 
@@ -66,7 +77,7 @@ docker compose up -d                 # Postgres on :5432
 cd backend && cp .env.example .env && uv run python scripts/gen_keys.py
 ```
 
-Paste the generated secrets into `backend/.env`, and add `GEMINI_API_KEY` (free at https://aistudio.google.com/apikey). Then:
+Paste the generated secrets into `backend/.env`. Then:
 
 ```bash
 cd backend && uv run alembic upgrade head && uv run uvicorn app.main:app --reload
@@ -112,7 +123,6 @@ The same app serves the web API and a **remote MCP endpoint** at `/mcp`, protect
    - `DATABASE_URL`: the Neon string
    - `OWNER_EMAIL`: same email as above
    - `PUBLIC_URL`: `https://<service-name>.onrender.com`
-   - `FERNET_KEY`: from `uv run python scripts/gen_keys.py`
 4. **Claude:**
    1. On claude.ai, open Settings → Connectors → *Add custom connector*.
    2. Enter `https://<service-name>.onrender.com/mcp`.
@@ -135,6 +145,12 @@ The same app serves the web API and a **remote MCP endpoint** at `/mcp`, protect
 
 Use one place for your data: once the connector works, remove the local `goalcoach` entry from Claude Desktop's config and use the connector everywhere. The local SQLite file and Neon are separate databases.
 
+## Reminders, your data and status
+
+The app runs its own scheduler inside the web process, so reminders, daily checks and feed updates need only the keep-alive ping. Settings shows whether each part is working. Email needs `RESEND_API_KEY` on Render; the calendar link in Settings works without it.
+
+Download your data from Settings about once a month, and restore it with `scripts/restore_backup.py` if you ever need to. There's deliberately no bulk export endpoint or automatic copy to another service, so your data only leaves the app when you download it.
+
 ## Project layout
 
 ```
@@ -143,7 +159,7 @@ backend/app/
   core/        config, db, auth, encryption
   routers/     goals (+chat, roadmap), entries, plan, replans, trends, reviews, dashboard, settings, jobs
   services/
-    llm/       provider interface, Gemini, structured output schemas
+    llm/       structured output schemas, and a hook tests use for a fake model
     prompts.py intake.py analysis.py scoring.py scheduler.py timeline.py
     roadmap.py weekly.py push.py trends/{feeds,scan}.py
 frontend/src/

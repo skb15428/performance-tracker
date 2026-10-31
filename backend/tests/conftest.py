@@ -1,13 +1,10 @@
 import os
 import tempfile
 
-from cryptography.fernet import Fernet
 
 _db = os.path.join(tempfile.mkdtemp(), "test.db")
 # Set TEST_DATABASE_URL to run against Postgres (the database is wiped).
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite+aiosqlite:///{_db}")
-os.environ["GEMINI_API_KEY"] = ""
-os.environ["FERNET_KEY"] = Fernet.generate_key().decode()
 os.environ["JOBS_SECRET"] = "test-secret"
 os.environ["ALLOW_REGISTRATION"] = "true"  # tests create several users
 

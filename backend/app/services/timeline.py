@@ -4,13 +4,14 @@ import math
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Activity, ActivityLink, DailyEntry, DailyReview, Goal, PlanItem, ReplanProposal, User
-from app.services import commitment, prompts, roadmap, scheduler, scoring
+from app.models import DailyEntry, DailyReview, Goal, PlanItem, ReplanProposal, User
+from app.services import prompts, roadmap, scheduler, scoring, timelogs
 from app.services.llm import LLMError, get_llm
 from app.services.llm.outputs import ReplanDraft
+from app.services.push import local_now
 
 
 @dataclass
@@ -107,7 +108,8 @@ MIN_HISTORY_DAYS = 7
 async def diagnose(session: AsyncSession, user: User, goal: Goal, today: date, status: TimelineStatus) -> dict:
     """Why a goal is off plan, and when it will really finish at the user's actual recent pace."""
     created = goal.created_at if goal.created_at.tzinfo else goal.created_at.replace(tzinfo=timezone.utc)
-    started = max(created.date(), today - timedelta(days=PACE_DAYS))
+    begun = local_now(user.timezone, created).date()
+    started = max(begun, today - timedelta(days=PACE_DAYS))
     history_days = (today - started).days
 
     window_start = today - timedelta(days=DIAGNOSIS_DAYS)
@@ -119,20 +121,15 @@ async def diagnose(session: AsyncSession, user: User, goal: Goal, today: date, s
     logged = set(await session.scalars(select(DailyEntry.date).join(DailyReview).where(
         DailyEntry.user_id == user.id, DailyEntry.date >= window_start, DailyEntry.date < today)))
     missed = [d for n in range(1, DIAGNOSIS_DAYS + 1)
-              if (d := today - timedelta(days=n)) >= created.date() and d not in logged
-              and (commitment.routine_minutes_on(goal.routine, d) > 0 if goal.routine else True)]
+              if (d := today - timedelta(days=n)) >= begun and d not in logged
+              and await roadmap.goal_target_minutes(session, user, goal, d) > 0]
 
     overruns = [{"id": i.id, "title": i.title, "est_hours": i.est_hours, "hours_logged": round(i.hours_logged, 1)}
                 for i in roadmap.ordered_items(goal)
                 if i.status in roadmap.OPEN_STATUSES and i.hours_logged >= i.est_hours]
 
-    minutes = await session.scalar(
-        select(func.coalesce(func.sum(Activity.minutes * ActivityLink.relevance), 0))
-        .select_from(ActivityLink)
-        .join(Activity, Activity.id == ActivityLink.activity_id)
-        .join(DailyEntry, DailyEntry.id == Activity.entry_id)
-        .where(DailyEntry.user_id == user.id, ActivityLink.goal_id == goal.id,
-               DailyEntry.date >= started, DailyEntry.date < today))
+    worked = await timelogs.worked_minutes(session, user.id, started, today - timedelta(days=1))
+    minutes = sum(m for (_, gid), m in worked.items() if gid == goal.id)
     actual_weekly = (float(minutes) / 60) / history_days * 7 if history_days else 0.0
     planned_weekly = status.hours_per_day * 7
     remaining = sum(roadmap.remaining_hours(i) for i in roadmap.ordered_items(goal)

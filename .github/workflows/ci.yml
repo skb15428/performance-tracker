@@ -1,0 +1,54 @@
+# Runs on every push. Render only deploys a commit after these checks pass (see autoDeployTrigger in render.yaml).
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: goalcoach
+          POSTGRES_PASSWORD: goalcoach
+          POSTGRES_DB: goalcoach_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U goalcoach" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - name: Tests on SQLite
+        run: uv run pytest -q
+      - name: Tests on Postgres, the database used in production
+        run: uv run pytest -q
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://goalcoach:goalcoach@localhost:5432/goalcoach_test
+      - name: Migrations match the models
+        run: uv run alembic upgrade head && uv run alembic check
+        env:
+          DATABASE_URL: postgresql+asyncpg://goalcoach:goalcoach@localhost:5432/goalcoach_test
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

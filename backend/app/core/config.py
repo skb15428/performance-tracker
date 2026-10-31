@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_JWT_SECRET = "change-me"
+DEFAULT_JOBS_SECRET = "change-me-too"
 
 
 class Settings(BaseSettings):
@@ -17,18 +19,12 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite+aiosqlite:///{BACKEND_DIR / 'goalcoach.db'}"
     # The single user the local MCP server acts as (created on first use).
     owner_email: str = "me@example.com"
-    jwt_secret: str = "change-me"
+    jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_lifetime_seconds: int = 60 * 60 * 24 * 14
-    # Fernet key used to encrypt per-user API keys. Generate with
-    # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-    fernet_key: str = ""
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    llm_provider: str = "gemini"
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-flash-latest"
-
-    jobs_secret: str = "change-me-too"
+    jobs_secret: str = DEFAULT_JOBS_SECRET
+    allow_default_jobs_secret: bool = False  # local development only
     # Nightly email reminders (Resend). Resend's test sender only delivers to the Resend account's own address.
     resend_api_key: str = ""
     email_from: str = "GoalCoach <onboarding@resend.dev>"
@@ -44,6 +40,15 @@ class Settings(BaseSettings):
 
     # Scoring knobs
     llm_weight: float = 0.5
+
+    @property
+    def uses_default_secrets(self) -> bool:
+        return self.jwt_secret == DEFAULT_JWT_SECRET or self.jobs_secret == DEFAULT_JOBS_SECRET
+
+    @property
+    def app_url(self) -> str:
+        """The web dashboard, for links in emails."""
+        return next((o for o in self.cors_origins if "localhost" not in o), self.cors_origins[0]).rstrip("/")
 
     @field_validator("database_url")
     @classmethod

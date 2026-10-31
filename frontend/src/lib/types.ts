@@ -63,6 +63,8 @@ export type RoadmapItem = {
   hours_logged: number
   completed_at: string | null
   source: 'ai' | 'user' | 'trend'
+  proof: 'interview' | 'log' | 'deliverable'
+  proof_links: { title: string; url: string }[]
 }
 export type RoadmapPhase = {
   id: number
@@ -117,6 +119,7 @@ export type GoalDayScore = {
   note: string
   timeline: string
   behind_days: number
+  extra?: boolean
 }
 export type Review = {
   total_score: number
@@ -128,7 +131,7 @@ export type Review = {
   adherence: number | null
   used_llm: boolean
   rest_day: boolean
-  breakdown: { explanation?: string }
+  breakdown: { explanation?: string; bonus_minutes?: number }
 }
 export type Entry = {
   id: number | null
@@ -147,6 +150,7 @@ export type PlanDetails = {
   steps?: { text: string; minutes: number; done?: boolean }[]
   resources?: { title: string; url: string }[]
   done_when?: string
+  topic_id?: number | null
 }
 
 export type PlanItem = {
@@ -196,6 +200,7 @@ export type WeeklyReview = {
   week_start: string
   stats: {
     days_logged: number
+    week_score?: WeekScore
     avg_score: number | null
     drift_minutes: number
     plan_items: number
@@ -227,24 +232,116 @@ export type Settings = {
   morning_push: boolean
   email_reminders: boolean
   daily_available_hours: number
-  has_own_key: boolean
-  server_llm_available: boolean
+  email_enabled: boolean
+  calendar_token: string | null
   vapid_public_key: string
+}
+
+export type AppStatus = {
+  scheduler_last_run: string | null
+  last_reminder_day: string | null
+  email_enabled: boolean
+  push_devices: number
+  calendar_connected: boolean
+  last_backup: string | null
+  errors_last_7_days: number
+  last_error: { where?: string; error?: string; at: string } | null
+  default_secrets: boolean
 }
 
 export type WeekDay = {
   date: string
-  state: 'done' | 'rest' | 'missed' | 'today' | 'upcoming'
+  state: 'done' | 'rest' | 'bonus' | 'before' | 'covered' | 'missed' | 'today' | 'upcoming'
   is_today: boolean
+  minutes: number
   planned_minutes: number
+  day_type: 'rest' | 'work' | null
+  goal_day_types: Record<string, 'rest' | 'work'>
+  usual: boolean
+}
+
+export type WeekScore = {
+  week_start: string
+  final: boolean
   score: number | null
+  explanation: string | null
+  hours_done: number
+  hours_target: number
+  hours_expected_so_far: number
+  ahead_hours: number
+  rest_days_marked: number
+  goals: {
+    goal_id: number
+    title: string
+    hours_done: number
+    hours_target: number
+    quality: number | null
+    sessions_done?: number
+    sessions_target?: number
+  }[]
+}
+
+export type ScorecardRow = {
+  goal: string
+  id: number
+  name: string
+  unit: string
+  start_value: number
+  target_value: number
+  latest_value: number | null
+  progress_pct: number
+  state: Metric['state']
+  source: string | null
+}
+
+export type TimeLog = { id: number; day: string; goal_id: number; roadmap_item_id: number | null; minutes: number; note: string; source: 'manual' | 'block' | 'interview' }
+
+export type JobStage = 'saved' | 'applied' | 'screen' | 'technical' | 'final' | 'offer' | 'rejected' | 'withdrawn'
+
+export type Application = {
+  id: number
+  company: string
+  role: string
+  url: string
+  referral: string
+  stage: JobStage
+  reached_final: boolean
+  applied_on: string | null
+  next_step: string
+  notes: string
+  updated_at: string
+}
+
+export type ProofItem = {
+  id: number
+  goal: string
+  title: string
+  status: string
+  completed_at: string | null
+  links: { title: string; url: string }[]
+  passed_topics: string[]
+}
+
+export type Readiness = {
+  passed: number
+  total: number
+  pct: number | null
+  items: { id: number; title: string; passed: number; total: number; planned_due: string | null }[]
+  weakest: { concept: string; topic: string; topic_id: number; score: number | null }[]
+  retests_due: number
+  unprepared_items: number
 }
 
 export type Dashboard = {
   today: string
+  reviewed_today: boolean
+  this_week: WeekScore
   week: WeekDay[]
-  scores: { date: string; score: number }[]
-  heatmap: { date: string; score: number; rest?: boolean }[]
+  next_week: WeekDay[]
+  attention: string[]
+  scorecard: ScorecardRow[]
+  week_scores: { week: string; score: number }[]
+  heatmap: { date: string; minutes: number; rest?: boolean }[]
   weekly_effort: ({ week: string } & Record<string, number | string>)[]
   goals: (Goal & {
     burnup: { date: string; planned: number | null; actual: number }[]
@@ -319,7 +416,24 @@ export type InterviewResult = {
   questions: { question: string; concept: string; is_follow_up?: boolean; answer_summary?: string; score: number; gap?: string }[]
 }
 
-export type StudyToday = { date: string; available_minutes: number; topics: TodayTopic[]; interviews: InterviewResult[] }
+export type StudyToday = { date: string; available_minutes: number; rest_day: boolean; topics: TodayTopic[]; interviews: InterviewResult[] }
+
+export type UpcomingDay = { date: string; minutes: number; topics: TodayTopic[] }
+
+export type UpcomingStep = {
+  id: number
+  goal: string
+  title: string
+  proof: 'interview' | 'log' | 'deliverable'
+  status: 'todo' | 'in_progress'
+  planned_start: string | null
+  planned_due: string | null
+  est_hours: number
+  topics: StudyTopic[]
+  needs_topics: boolean
+}
+
+export type StudyUpcoming = { days: UpcomingDay[]; steps: UpcomingStep[] }
 
 export type Metric = {
   id: number
@@ -333,6 +447,7 @@ export type Metric = {
   state: 'no_data' | 'no_target_date' | 'behind' | 'on_track' | 'ahead'
   progress_pct: number
   expected_value: number | null
+  source: string | null
 }
 
 export type GoalStudy = { items: Record<string, { passed: number; total: number }>; metrics: Metric[] }

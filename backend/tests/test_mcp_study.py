@@ -96,8 +96,8 @@ async def test_study_flow():
             "activities": [{"description": "Vector DBs", "minutes": 120, "kind": "learn", "links": [{"goal_id": gid}]}],
             "goal_impacts": [{"goal_id": gid, "impact": 7}], "time_value": 9,
             "time_value_reason": "Valuable off-plan topic"})
-        assert "time use 90%" in day["score_explanation"]
-        assert day["breakdown"]["time_value_reason"] == "Valuable off-plan topic"
+        assert "work quality 7.6/10" in day["this_week"]["explanation"]  # 70% rating 7, 30% time value 9
+        assert day["time_value_reason"] == "Valuable off-plan topic"
 
         # A physical goal: measured by numbers, with no interview
         fit = (await call(session, "create_goal", title="Get fit", category="health",
@@ -114,3 +114,95 @@ async def test_study_flow():
 
         stats = await call(session, "get_weekly_stats", week_start=str(today + timedelta(days=1)))
         assert stats["study"]["topics_passed"] >= 1
+
+        # The job search, from Claude
+        job = await call(session, "save_application", company="Anthropic", role="AI Engineer")
+        await call(session, "save_application", company="Anthropic", application_id=job["id"], stage="final")
+        pipeline = await call(session, "get_applications")
+        assert pipeline["by_stage"] == {"final": 1} and pipeline["final_rounds_reached"] == 1
+        sent = await call(session, "add_metric", goal_id=gid, name="Applications", start_value=0, target_value=30,
+                          source="applications")
+        assert sent["latest_value"] == 1
+        linked = await call(session, "update_roadmap_item", item_id=ship["id"], link_url="https://github.com/me/app",
+                            link_title="Repo")
+        assert linked["item"]["id"] == ship["id"]
+
+
+async def test_rest_day_shows_whats_ahead_and_extra_work_is_a_bonus():
+    db = Path(tempfile.mkdtemp()) / "rest.db"
+    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", ""), "DATABASE_URL": f"sqlite+aiosqlite:///{db}",
+           "OWNER_EMAIL": "owner@example.com"}
+    params = StdioServerParameters(command=sys.executable, args=["-m", "app.mcp_server"], cwd=str(BACKEND), env=env)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        today = date.fromisoformat((await call(session, "get_overview"))["today"])
+        tomorrow = today + timedelta(days=1)
+        gid = (await call(session, "create_goal", title="AI engineer"))["goal_id"]
+        await call(session, "confirm_goal_definition", goal_id=gid, statement="AI", success_criteria=["x"])
+        rm = await call(session, "set_roadmap", goal_id=gid, roadmap_draft={"summary": "", "phases": [
+            {"title": "P", "items": [{"type": "topic", "title": "DSA", "est_hours": 10}]}]})
+        dsa = rm["phases"][0]["items"][0]["id"]
+        working = [d for d in ALL_DAYS if d != ALL_DAYS[today.weekday()]]  # today is the weekly rest day
+        await call(session, "confirm_commitment", goal_id=gid, target_date=str(today + timedelta(days=90)),
+                   routine=[{"days": working, "start": "09:00", "end": "10:00", "activity": "Study"}])
+        split = await call(session, "set_item_topics", item_id=dsa, topics=[GRAPHS, HEAPS])
+        graphs = split["topics"][0]["topic_id"]
+
+        # Nothing is due, but what's ahead is visible day by day
+        ctx = await call(session, "get_study_context")
+        assert ctx["rest_day"] and not ctx["topics"] and ctx["available_minutes"] == 0
+        ahead = [(d["date"], [t["title"] for t in d["topics"]]) for d in ctx["coming_up"]]
+        assert ahead == [(str(tomorrow), ["Graphs"]), (str(tomorrow + timedelta(days=1)), ["Heaps"])]
+        assert (await call(session, "plan_day"))["rest_day"]
+
+        # Working anyway: an early pass moves the next topic up
+        answers = marks(("BFS", 5), ("BFS", 5), ("DFS", 5), ("DFS", 4))
+        out = await call(session, "save_interview", topic_id=graphs, minutes=45, questions=answers)
+        assert out["passed"]
+
+        # The same save again, as after a dropped connection, changes nothing
+        again = await call(session, "save_interview", topic_id=graphs, minutes=45, questions=answers)
+        assert again["already_saved"] and again["passed"]
+        day_view = await call(session, "get_day_context")
+        assert [(x["minutes"], x["source"]) for x in day_view["already_logged"]] == [(45, "interview")]
+        ctx = await call(session, "get_study_context")
+        assert ctx["coming_up"][0]["date"] == str(tomorrow)
+        assert [t["title"] for t in ctx["coming_up"][0]["topics"]] == ["Heaps"]
+
+        # The review credits the hours to the week, however the day is rated
+        streak = (await call(session, "get_overview"))["streak_days"]
+        day = await call(session, "save_day_review", review={
+            "activities": [{"description": "Graphs", "minutes": 45, "kind": "learn", "links": [{"goal_id": gid}]},
+                           {"description": "Heaps", "minutes": 15, "kind": "learn",
+                            "links": [{"goal_id": gid, "roadmap_item_id": dsa}]}],
+            "goal_impacts": [{"goal_id": gid, "impact": 8}], "time_value": 9,
+            "item_progress": [{"roadmap_item_id": dsa, "hours": 1.0}]})  # all of it, the server subtracts the interview
+        assert day["rest_day"] and "score" not in day and day["bonus_minutes"] == 60
+        assert day["this_week"]["hours_done"] == 1.0  # a rest day's work still counts toward the week
+        assert (await call(session, "get_overview"))["streak_days"] == streak
+        logged = (await call(session, "get_roadmap", goal_id=gid))["phases"][0]["items"][0]["hours_logged"]
+        assert logged == 1.0  # 45 minutes from the interview, 15 from the review
+
+        # A session they add for themselves and then skip costs nothing
+        added = await call(session, "edit_plan", add=[{"title": "Extra DSA", "minutes": 60, "goal_id": gid}])
+        skipped = await call(session, "save_day_review", review={"activities": []}, plan_status=[
+            {"plan_item_id": added["plan"][0]["plan_item_id"], "status": "skipped"}])
+        assert skipped["rest_day"]
+
+        # Turning a rest day into a work day gives it a usual day's time and a plan; undoing it clears the plan
+        worked = await call(session, "set_day_type", day_type="work")
+        assert worked["day_type"] == "work" and worked["plan"]
+        assert (await call(session, "get_study_context"))["available_minutes"] == 60
+        assert (await call(session, "set_day_type", day_type="normal"))["day_type"] == "normal"
+        assert (await call(session, "get_study_context"))["rest_day"]
+
+        # Taking a working day off: no topics that day, and the forecast moves past it
+        off = await call(session, "set_day_type", day_type="rest", day=str(tomorrow))
+        assert off["day_type"] == "rest"
+        assert (await call(session, "get_study_context"))["coming_up"][0]["date"] == str(tomorrow + timedelta(days=1))
+
+        # Moving a roadmap step re-dates what's left
+        added = await call(session, "add_roadmap_item", goal_id=gid, title="Portfolio site", est_hours=4)
+        moved = await call(session, "move_roadmap_item", item_id=added["item"]["id"],
+                           phase_id=rm["phases"][0]["phase_id"])
+        assert moved["phases"][0]["items"][0]["title"] == "Portfolio site"

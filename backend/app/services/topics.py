@@ -1,7 +1,7 @@
 """Which study topics a day should cover. Unfinished topics roll forward by themselves."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,8 @@ from app.services import roadmap
 
 RETEST_MINUTES = 10
 RETEST_SHARE = 0.3  # re-tests can't take more than this share of the day
+UPCOMING_DAYS = 7  # working days shown ahead
+UPCOMING_LOOKAHEAD = 30  # calendar days searched for them
 
 
 @dataclass
@@ -18,6 +20,13 @@ class DayTopic:
     topic: StudyTopic
     mode: str  # retest/carryover/new
     minutes: int
+
+
+@dataclass
+class UpcomingDay:
+    day: date
+    minutes: int
+    topics: list[tuple[Goal, DayTopic]]
 
 
 def topic_minutes(topic: StudyTopic) -> int:
@@ -67,13 +76,63 @@ async def goal_topics(session: AsyncSession, goal: Goal) -> list[StudyTopic]:
     return sorted(rows, key=lambda t: (position.get(t.roadmap_item_id, -1), t.order, t.id))
 
 
+def reachable(goal: Goal, rows: list[StudyTopic]) -> list[StudyTopic]:
+    """The topics that can come up now. A new topic waits for the roadmap to reach its step, so a project or an
+    unprepared step ahead of it isn't skipped; topics already started, chosen or off-plan are always in."""
+    prepared = {t.roadmap_item_id for t in rows}
+    reached: set[int] = set()
+    for item in roadmap.ordered_items(goal):
+        if item.status in roadmap.OPEN_STATUSES:
+            if item.proof != "interview" or item.id not in prepared:
+                break
+            reached.add(item.id)
+    return [t for t in rows if t.status != "new" or t.planned_for or t.roadmap_item_id is None
+            or t.roadmap_item_id in reached]
+
+
 async def day_topics(session: AsyncSession, user: User, goals: list[Goal], day: date) -> list[tuple[Goal, DayTopic]]:
     out = []
     for g in goals:
         minutes = await roadmap.goal_target_minutes(session, user, g, day)
-        if minutes > 0 or any(t.planned_for == day for t in await goal_topics(session, g)):
-            out += [(g, dt) for dt in choose(await goal_topics(session, g), day, minutes)]
+        rows = await goal_topics(session, g)
+        if minutes > 0 or any(t.planned_for == day for t in rows):
+            out += [(g, dt) for dt in choose(reachable(g, rows), day, minutes)]
     return out
+
+
+async def is_rest_day(session: AsyncSession, user: User, goals: list[Goal], day: date) -> bool:
+    """No goal has time planned. A session the user adds for themselves doesn't change that."""
+    return bool(goals) and not any([await roadmap.goal_target_minutes(session, user, g, day) for g in goals])
+
+
+async def upcoming_days(session: AsyncSession, user: User, goals: list[Goal], today: date,
+                        count: int = UPCOMING_DAYS) -> list[UpcomingDay]:
+    """A forecast of the next working days, each taking the next topics as if the days before it went to plan.
+    A topic that overruns its day eats into the next one, which keeps these dates in step with the roadmap's."""
+    pools = {g.id: reachable(g, await goal_topics(session, g)) for g in goals}
+    taken = {p.topic.id for _, p in await day_topics(session, user, goals, today)}
+    overrun = dict.fromkeys(pools, 0)
+    days: list[UpcomingDay] = []
+    for offset in range(1, UPCOMING_LOOKAHEAD + 1):
+        d = today + timedelta(days=offset)
+        picked: list[tuple[Goal, DayTopic]] = []
+        total = 0
+        for g in goals:
+            minutes = await roadmap.goal_target_minutes(session, user, g, d)
+            total += minutes
+            left = minutes - overrun[g.id]
+            if left <= 0:  # a rest day, or the whole day goes on finishing the last topic
+                overrun[g.id] -= minutes
+                continue
+            chosen = choose([t for t in pools[g.id] if t.id not in taken], d, left)
+            overrun[g.id] = max(sum(p.minutes for p in chosen) - left, 0)
+            taken |= {p.topic.id for p in chosen}
+            picked += [(g, p) for p in chosen]
+        if picked:
+            days.append(UpcomingDay(d, total, picked))
+        if len(days) == count:
+            break
+    return days
 
 
 async def item_topics(session: AsyncSession, item_id: int) -> list[StudyTopic]:

@@ -3,21 +3,23 @@
 import asyncio
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pywebpush import WebPushException, webpush
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import DailyEntry, DailyReview, PlanItem, PushSubscription, User
+from app.models import DailyEntry, DailyReview, PlanItem, PushSubscription, TimeLog, User, WeeklyReview
 from app.services.email import send_email
 
 log = logging.getLogger(__name__)
 MORNING_TIME = "07:00"
-WINDOW_MINUTES = 15  # matches the cron cadence
+WEEKLY_NUDGE_TIME = "09:00"
+QUIET_DAYS = 2  # days without logging before the reminder says so
+WINDOW_MINUTES = 30  # wide enough that a scheduler tick can't miss it; `last_*_on` stops repeats
 
 
 def local_now(tz: str, now: datetime | None = None) -> datetime:
@@ -94,13 +96,31 @@ async def todays_plan(session: AsyncSession, user: User, today: date, create: bo
         blocks = await analysis.rule_plan(session, user, today)
         if blocks:
             plan = await analysis.save_plan(session, user, today, blocks)
-    return plan
+    return [p for p in plan if p.status != "skipped"]
 
 
 async def is_rest_day(session: AsyncSession, user: User, today: date) -> bool:
     from app.services import analysis
 
-    return not await analysis.plan_for(session, user.id, today) and not await analysis.rule_plan(session, user, today)
+    plan = await analysis.plan_for(session, user.id, today)
+    return not any(p.status != "skipped" for p in plan) and not await analysis.rule_plan(session, user, today)
+
+
+async def days_since_logged(session: AsyncSession, user: User, today: date) -> int | None:
+    """Days since the user last logged anything, None if they never have."""
+    reviewed = await session.scalar(select(func.max(DailyEntry.date)).join(DailyReview)
+                                    .where(DailyEntry.user_id == user.id))
+    logged = await session.scalar(select(func.max(TimeLog.day)).where(TimeLog.user_id == user.id))
+    latest = max((d for d in (reviewed, logged) if d), default=None)
+    return (today - latest).days if latest else None
+
+
+async def notify(session: AsyncSession, user: User, title: str, body: str, url: str) -> int:
+    """Send by push and email, whichever the user has."""
+    sent = await send_to_user(session, user.id, {"title": title, "body": body, "url": url})
+    if user.email_reminders:
+        sent += await send_email(user.email, title, f'<p>{body}</p><p><a href="{url}">Open it</a></p>')
+    return sent
 
 
 async def run_reminders(session: AsyncSession, now: datetime | None = None) -> int:
@@ -117,23 +137,29 @@ async def run_reminders(session: AsyncSession, now: datetime | None = None) -> i
                 and user.last_reminded_on != today and not await has_review(session, user.id, today)):
             user.last_reminded_on = today
             if not await is_rest_day(session, user, today):
-                link = claude_link("Log my day")
-                sent += await send_to_user(session, user.id, {
-                    "title": "How did today go?",
-                    "body": "Tap to tell Claude about your day and get tomorrow's plan.",
-                    "url": link,
-                })
-                if user.email_reminders:
-                    sent += await send_email(user.email, "How did today go?", (
-                        f'<p>Take 3 minutes to tell Claude about your day and get tomorrow\'s plan.</p>'
-                        f'<p><a href="{link}">Log my day in Claude</a></p>'))
+                quiet = await days_since_logged(session, user, today)
+                body = (f"Nothing logged for {quiet} days. Tap to catch up with Claude, it only takes a few minutes."
+                        if quiet is not None and quiet >= QUIET_DAYS
+                        else "Tap to tell Claude about your day and get tomorrow's plan.")
+                sent += await notify(session, user, "How did today go?", body, claude_link("Log my day"))
         # Morning: today's plan, built from the routine if last night's review didn't make one.
-        if user.morning_push and in_window(local, MORNING_TIME):
+        if user.morning_push and in_window(local, MORNING_TIME) and user.last_morning_on != today:
+            user.last_morning_on = today
             plan = await todays_plan(session, user, today, create=True)
             if plan:
                 sent += await send_to_user(session, user.id, {
                     "title": f"Today: {len(plan)} block{'s' if len(plan) > 1 else ''}",
                     "body": plan_summary(plan), "url": "/",
                 })
+        # Monday: last week's review, if it hasn't been done.
+        if today.weekday() == 0 and in_window(local, WEEKLY_NUDGE_TIME) and user.last_weekly_nudge_on != today:
+            user.last_weekly_nudge_on = today
+            monday = today - timedelta(days=7)
+            done = await session.scalar(select(WeeklyReview.id).where(WeeklyReview.user_id == user.id,
+                                                                      WeeklyReview.week_start == monday))
+            if done is None:
+                sent += await notify(session, user, "Time for your weekly review",
+                                     "See how last week went and set your focus for this one.",
+                                     claude_link("Do my weekly review"))
     await session.flush()
     return sent

@@ -1,5 +1,3 @@
-from datetime import date
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import current_user
 from app.core.db import get_session
-from app.models import Goal, RoadmapItem, RoadmapPhase, User
+from app.models import Goal, RoadmapItem, RoadmapPhase, StudyTopic, User
 from app.schemas import (
     ApproveIn,
     ChatIn,
@@ -19,6 +17,7 @@ from app.schemas import (
     GoalPatch,
     ItemIn,
     ItemPatch,
+    ProofLinkIn,
     RoadmapItemOut,
     RoadmapOut,
     RoadmapPhaseOut,
@@ -30,12 +29,30 @@ from app.services.push import local_now
 router = APIRouter(prefix="/goals", tags=["goals"])
 
 
+async def proven_pct(session: AsyncSession, goal: Goal) -> float:
+    """How much of the goal is proven, not just worked on: a study step counts its passed topics rather than its hours."""
+    items = [i for i in roadmap.ordered_items(goal) if i.status != "skipped"]
+    passed: dict[int, list[int]] = {}
+    for item_id, status in await session.execute(
+            select(StudyTopic.roadmap_item_id, StudyTopic.status).where(StudyTopic.goal_id == goal.id)):
+        row = passed.setdefault(item_id, [0, 0])
+        row[0] += status == "passed"
+        row[1] += 1
+
+    def proven_hours(item: RoadmapItem) -> float:
+        if item.status == "done":
+            return item.est_hours
+        if item.id in passed:
+            return item.est_hours * passed[item.id][0] / passed[item.id][1]
+        return 0.0 if item.proof == "interview" else min(item.hours_logged, item.est_hours)
+
+    total = sum(i.est_hours for i in items)
+    return round(100 * sum(proven_hours(i) for i in items) / total, 1) if total else 0
+
+
 async def goal_out(session: AsyncSession, user: User, goal: Goal) -> GoalOut:
     out = GoalOut.model_validate(goal)
-    items = [i for i in roadmap.ordered_items(goal) if i.status != "skipped"]
-    total = sum(i.est_hours for i in items)
-    done = sum(i.est_hours if i.status == "done" else min(i.hours_logged, i.est_hours) for i in items)
-    out.progress_pct = round(100 * done / total, 1) if total else 0
+    out.progress_pct = await proven_pct(session, goal)
     if goal.intake_status == "active":
         out.timeline = TimelineOut(**(await timeline.goal_status(session, user, goal, local_now(user.timezone).date())).as_dict())
         pending = await timeline.pending_replan(session, goal.id)
@@ -202,6 +219,24 @@ async def update_item(item_id: int, body: ItemPatch, user: User = Depends(curren
         item.completed_at = local_now(user.timezone).date()
     elif "status" in data and data["status"] != "done":
         item.completed_at = None
+    await session.commit()
+    return RoadmapItemOut.model_validate(item)
+
+
+@router.post("/roadmap/items/{item_id}/links", response_model=RoadmapItemOut, status_code=201)
+async def add_proof_link(item_id: int, body: ProofLinkIn, user: User = Depends(current_user),
+                         session: AsyncSession = Depends(get_session)):
+    item = await _item_for_user(session, item_id, user)
+    item.proof_links = [*(item.proof_links or []), body.model_dump()]
+    await session.commit()
+    return RoadmapItemOut.model_validate(item)
+
+
+@router.delete("/roadmap/items/{item_id}/links/{index}", response_model=RoadmapItemOut)
+async def remove_proof_link(item_id: int, index: int, user: User = Depends(current_user),
+                            session: AsyncSession = Depends(get_session)):
+    item = await _item_for_user(session, item_id, user)
+    item.proof_links = [link for n, link in enumerate(item.proof_links or []) if n != index]
     await session.commit()
     return RoadmapItemOut.model_validate(item)
 

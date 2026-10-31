@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.core.db import SessionLocal
 from app.models import Goal, PlanItem, PushSubscription, RoadmapItem, RoadmapPhase, User
-from app.services import push
+from app.services import analysis, push
 from tests.conftest import register
 
 SAT = datetime(2026, 10, 17, tzinfo=timezone.utc)  # Saturday
@@ -30,13 +30,14 @@ async def setup_user(client, email: str):
 
 async def test_reminders(client, monkeypatch):
     sent: list[dict] = []
+    uid = await setup_user(client, "reminders@example.com")
 
     async def fake_send(session, user_id, payload):
-        sent.append(payload)
+        if user_id == uid:
+            sent.append(payload)
         return 1
 
     monkeypatch.setattr(push, "send_to_user", fake_send)
-    uid = await setup_user(client, "reminders@example.com")
 
     async with SessionLocal() as s:
         # Saturday night: nothing in the routine, no plan -> rest day, no nudge
@@ -53,6 +54,28 @@ async def test_reminders(client, monkeypatch):
         await push.run_reminders(s, monday.replace(hour=21, minute=16))
         nightly = [p for p in sent if p["title"] == "How did today go?"]
         assert len(nightly) == 1 and nightly[0]["url"] == "https://claude.ai/new?q=Log%20my%20day"
+
+
+async def test_a_marked_rest_day_gets_no_reminders_and_a_marked_work_day_does(client, monkeypatch):
+    sent: list[dict] = []
+    uid = await setup_user(client, "marked@example.com")
+
+    async def fake_send(session, user_id, payload):
+        if user_id == uid:
+            sent.append(payload)
+        return 1
+
+    monkeypatch.setattr(push, "send_to_user", fake_send)
+    monday = SAT + timedelta(days=2)
+    async with SessionLocal() as s:
+        user = await s.get(User, uid)
+        await analysis.set_day_type(s, user, monday.date(), "rest")
+        await push.run_reminders(s, monday.replace(hour=7, minute=3))
+        await push.run_reminders(s, monday.replace(hour=21, minute=1))
+        assert sent == []
+        await analysis.set_day_type(s, user, SAT.date(), "work")
+        await push.run_reminders(s, SAT.replace(hour=21, minute=5))
+        assert [p["title"] for p in sent] == ["How did today go?"]
 
 
 async def test_email_reminder_uses_the_same_rules(client, monkeypatch):

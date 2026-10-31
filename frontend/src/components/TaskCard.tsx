@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtMinutes } from '../lib/dates'
 import type { PlanDetails } from '../lib/types'
@@ -72,6 +73,10 @@ export default function TaskCard({
   const qc = useQueryClient()
   const setStatus = useMutation({
     mutationFn: (status: TaskBlock['status']) => api(`/plan/${block.id}`, { method: 'PATCH', json: { status } }),
+    onSuccess: () => qc.invalidateQueries(),
+  })
+  const saveTimer = useMutation({
+    mutationFn: (json: { status: TaskBlock['status']; done_minutes: number }) => api(`/plan/${block.id}`, { method: 'PATCH', json }),
     onSuccess: () => qc.invalidateQueries(),
   })
   const { title, details } = normalise(block)
@@ -226,6 +231,11 @@ export default function TaskCard({
           {block.status === 'open' || block.status === 'partial' ? (
             <>
               {steps.length > 0 && <Button onClick={() => setFocus(true)}>▶ Start focus</Button>}
+              {details.topic_id && (
+                <Link to={`/study/${details.topic_id}`}>
+                  <Button variant="secondary">Open topic</Button>
+                </Link>
+              )}
               <Button
                 variant={steps.length > 0 ? 'secondary' : 'primary'}
                 loading={setStatus.isPending && setStatus.variables === 'done'}
@@ -236,7 +246,7 @@ export default function TaskCard({
               <Button variant="ghost" loading={setStatus.isPending && setStatus.variables === 'skipped'} onClick={() => setStatus.mutate('skipped')}>
                 Skip today
               </Button>
-              <span className="ml-auto hidden text-xs text-muted sm:inline">Did part of it? Tell Claude tonight.</span>
+              <span className="ml-auto hidden text-xs text-muted sm:inline">Marking it done adds its time to your week.</span>
             </>
           ) : (
             <Button variant="secondary" size="sm" loading={setStatus.isPending} onClick={() => setStatus.mutate('open')}>
@@ -251,8 +261,11 @@ export default function TaskCard({
           steps={steps}
           doneWhen={details.done_when}
           onToggleStep={toggleStep}
-          onComplete={() => setStatus.mutate('done')}
-          onClose={() => setFocus(false)}
+          onComplete={(minutes) => saveTimer.mutate({ status: 'done', done_minutes: minutes || block.minutes })}
+          onClose={(minutes) => {
+            if (minutes > 0) saveTimer.mutate({ status: 'partial', done_minutes: minutes })
+            setFocus(false)
+          }}
         />
       )}
     </article>

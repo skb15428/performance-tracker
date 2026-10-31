@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import BACKEND_DIR, get_settings
 from app.core.db import SessionLocal
 from app.models import (
+    JobApplication,
     Activity,
     ActivityLink,
     DailyEntry,
@@ -46,10 +47,9 @@ from app.models import (
     WeeklyReview,
 )
 from app.routers.goals import goal_out
-from app.services import analysis, commitment, mastery, roadmap, timeline, weekly
+from app.services import analysis, commitment, events, jobsearch, mastery, metrics, roadmap, timeline, timelogs, weekly
 from app.services import topics as study
 from app.services.llm.outputs import DayAnalysis, PlanDetails, ReplanDraft, Resource, RoadmapDraft
-from app.services.metrics import metric_status
 from app.services.push import local_now
 from app.services.trends.feeds import USER_SOURCE_WEIGHT, ensure_default_sources, ingest_all
 from app.services.trends.scan import rank_candidates, search_terms
@@ -99,6 +99,17 @@ STUDY: get_study_context shows today's topics. If an item is listed in items_nee
 set_item_topics: all subtopics needed for depth and breadth, with honest minutes. You decide how many topics fit the
 available time at the user's pace; change the selection with plan_topics. If the user studies something else, call
 add_study_topic. It counts fully. The user may name specific subtopics; focus on those.
+get_study_context also returns coming_up, the next working days topic by topic, so you can answer what's ahead.
+FLEXIBLE DAYS: the score is weekly, so the user can spread their hours however they like: 4 hours today and nothing
+tomorrow is fine. Use set_day_type when they ask to take a day off (rest) or to work on a rest day (work); it works for
+past and future days too, and goal_id limits it to one goal, such as resting the gym but not study. A rest day takes its hours off the week's target, so it can't lower the score, but it doesn't
+move the roadmap dates: if rest days keep adding up, say what it does to the finish date, once. When rest_day is true
+nothing is due, so never push work; if they choose to work, offer the first topics in coming_up, or the next roadmap
+item if it isn't a study item. If they have more time than usual, extend the day with edit_plan.
+SCORECARD AND PROOF: turn success criteria into numbers with add_metric. source=applications, final_rounds, offers or
+proof_links count themselves; log anything else with log_metric. When a deliverable is finished, ask for a link to it
+(repo, blog, demo) and save it with update_roadmap_item link_url, so the proof page stays useful.
+JOB SEARCH: record every application and stage change with save_application, and use get_applications to see the pipeline.
 LEARN MODE: the user is the interviewer and asks you anything on the topic. Answer accurately and in depth, with code
 when useful. Point out subtopics they haven't asked about yet so breadth isn't missed.
 INTERVIEW MODE: you are a strict senior interviewer and the user answers. Ask one question at a time, wait for the
@@ -125,11 +136,14 @@ with real links, and done_when (a checkable finish line, e.g. "your output match
 Use get_study_context for tomorrow's date to fill knowledge blocks. Before saving, ask if tomorrow is different
 (meetings, travel) and adjust. Add one tip. Rate time_value 0-10 with time_value_reason: were the day's available hours
 well used, and was the work worth it for the goals, planned or not? Valuable off-plan learning scores high; low-value
-busywork scores low even if planned. Include study sessions as activities, but leave their hours out of item_progress
-because save_interview already credited them. Unfinished topics roll forward by themselves. Judge log goals on what
+busywork scores low even if planned. already_logged shows time the user logged in the app, blocks they marked done and
+interviews: include all of it as activities, and give item_progress as all the hours on each item that day, because the
+server subtracts what's already credited. Unfinished topics roll forward by themselves. Judge log goals on what
 was reported against the routine and target. If off-plan work keeps delaying the main path, say so once and show the
-effect on the finish date. Call save_day_review and present the score with its one-line score_explanation, the score per goal, the
-good/bad points and tomorrow's plan. A rest day has no score: just acknowledge it and show tomorrow's plan.
+effect on the finish date. Call save_day_review and present today's hours, the week so far from this_week (score, hours
+against the target, how far ahead or behind), the good/bad points and tomorrow's plan. The score is weekly: never give
+the user a daily score, and treat the daily numbers in the history tools as patterns only. On a rest day, say how much
+extra work was credited (bonus_minutes) if any.
 If it returns items_over_estimate, ask whether each is done or how many more hours it needs, then call
 update_roadmap_item (status="done", or est_hours = logged + extra) with reschedule=True and mention any date change.
 
@@ -154,7 +168,8 @@ the user approves with add_roadmap_item and set_item_topics. Then call mark_road
 
 WEEKLY REVIEW: if get_overview shows weekly_review_due_for_week, offer it once. Call get_weekly_stats for that
 week. Start by following up last_week_focus: ask (or infer from the stats) whether each was kept. Then write a candid
-review: compare with the previous week and the 4-week trend, show each goal's hours vs committed hours, and point out
+review: lead with week_score and its explanation, compare with the previous week and the 4-week trend, show each goal's
+hours vs committed hours, say how many rest days were marked if it matters, and point out
 the 1-2 patterns that matter most (e.g. evening blocks rarely get done, Mondays are weak, low energy follows late
 scrolling). Recommendations must be concrete actions. Offer to turn the ones the user accepts into real changes now
 (routine tweak via confirm_commitment, replan, plan edits), and agree 1-3 short, checkable focus points for next
@@ -223,7 +238,13 @@ async def owner_session():
             )
             session.add(user)
             await session.flush()
-        yield session, user
+        try:
+            yield session, user
+        except ToolError:
+            raise
+        except Exception as e:  # Claude only sees a generic failure, so keep the real one for Settings
+            await events.record("error", {"where": "claude tool", "error": events.describe(e)})
+            raise
         await session.commit()
 
 
@@ -346,11 +367,13 @@ async def unlogged_days(session: AsyncSession, user: User, goals: list[Goal], lo
     tracked = [g for g in goals if g.status == "active" and g.intake_status == "active"]
     if not tracked:
         return []
-    started = min(local_now(user.timezone, g.created_at if g.created_at.tzinfo
-                            else g.created_at.replace(tzinfo=timezone.utc)).date() for g in tracked)
+    started = min(weekly.goal_start(user, g) for g in tracked)
     rest_wd = analysis.rest_weekdays(tracked)
     days = [today - timedelta(days=n) for n in range(7, 0, -1)]
-    return [d.isoformat() for d in days if d >= started and d not in logged and d.weekday() not in rest_wd]
+    marked = set(await session.scalars(select(DailyEntry.date).where(
+        DailyEntry.user_id == user.id, DailyEntry.day_type == "rest", DailyEntry.date >= days[0])))
+    return [d.isoformat() for d in days if d >= started and d not in logged and d.weekday() not in rest_wd
+            and d not in marked]
 
 @mcp.tool()
 async def get_overview() -> dict:
@@ -376,8 +399,9 @@ async def get_overview() -> dict:
                          "daily_available_hours": user.daily_available_hours},
             "goals": [await goal_summary(session, user, g) for g in goals],
             "today_logged": any(r.date == today for r in recent),
+            "this_week": await weekly.week_score(session, user, weekly.week_start_of(today), today),
             "streak_days": await analysis.streak_before(session, user.id, today)
-            + (1 if any(r.date == today for r in recent) else 0),
+            + (1 if any(r.date == today and not r.rest_day for r in recent) else 0),
             "recent_scores": [{"date": r.date.isoformat(), "score": None if r.rest_day else r.total_score,
                                "rest_day": r.rest_day} for r in recent],
             "unlogged_days": unlogged,
@@ -577,16 +601,17 @@ async def confirm_commitment(goal_id: int, target_date: str, routine: list[Routi
         if not blocks or any(commitment.block_minutes(b["start"], b["end"]) <= 0 or not b["days"] for b in blocks):
             raise ToolError("Give at least one routine block; each needs days and a start before its end (HH:MM).")
         days_per_week = len({d for b in blocks for d in b["days"]})
-        weekly = commitment.routine_weekly_minutes(blocks) / 60
+        weekly_hours = commitment.routine_weekly_minutes(blocks) / 60
+        await weekly.freeze_past_weeks(session, user, goal, today_for(user))  # old weeks keep the routine they had
         goal.target_date = date.fromisoformat(target_date)
-        goal.hours_per_day, goal.days_per_week, goal.routine = round(weekly / days_per_week, 2), days_per_week, blocks
+        goal.hours_per_day, goal.days_per_week, goal.routine = round(weekly_hours / days_per_week, 2), days_per_week, blocks
         goal.commitment_agreed_at = datetime.now(timezone.utc)
         refresh_intake_status(goal)
         feas = await roadmap.reschedule(session, user, goal, today_for(user))
         await session.flush()
 
         warnings = routine_clashes(goal, blocks, await analysis.load_goals_with_items(session, user))
-        cap = await capacity(session, user, goal, weekly)
+        cap = await capacity(session, user, goal, weekly_hours)
         if not cap["fits"]:
             warnings.append(f"All goals together exceed the user's available time by {cap['over_by_hours_per_week']}h"
                             "/week. Consider raising daily_available_hours (update_settings) or lowering a goal.")
@@ -640,8 +665,10 @@ async def update_roadmap_item(item_id: int, status: Literal["todo", "in_progress
                               title: str | None = None, description: str | None = None,
                               est_hours: float | None = None, hours_logged: float | None = None,
                               reschedule: bool = False, override: bool = False,
-                              proof: Literal["interview", "log", "deliverable"] | None = None) -> dict:
-    """Edit a roadmap item (mark done/skipped, fix estimates, correct logged hours). For an item that ran over its
+                              proof: Literal["interview", "log", "deliverable"] | None = None,
+                              link_url: str | None = None, link_title: str = "") -> dict:
+    """Edit a roadmap item (mark done/skipped, fix estimates, correct logged hours, add a link to finished work with
+    link_url and link_title). For an item that ran over its
     estimate, ask the user whether it's done or how many more hours it needs, then set status="done" or
     est_hours = hours_logged + extra. reschedule=True re-dates the goal's remaining items afterwards (the finish
     date may move; tell the user). An item with unpassed topics can't be marked done: pass its interviews, or set
@@ -653,6 +680,10 @@ async def update_roadmap_item(item_id: int, status: Literal["todo", "in_progress
                             "override.")
         if proof is not None:
             item.proof = proof
+        if link_url is not None:
+            if not link_url.startswith(("http://", "https://")):
+                raise ToolError("link_url must be a full http(s) link.")
+            item.proof_links = [*(item.proof_links or []), {"title": link_title, "url": link_url}]
         for field, value in {"title": title, "description": description, "est_hours": est_hours,
                              "hours_logged": hours_logged}.items():
             if value is not None:
@@ -666,6 +697,32 @@ async def update_roadmap_item(item_id: int, status: Literal["todo", "in_progress
             feas = await roadmap.reschedule(session, user, goal, today_for(user))
             out["feasibility"] = feasibility_view(feas)
         return {"item": item_view(item), **out}  # after rescheduling, so the dates are current
+
+
+@mcp.tool()
+async def move_roadmap_item(item_id: int, after_item_id: int | None = None, phase_id: int | None = None) -> dict:
+    """Move a roadmap item earlier or later: right after after_item_id, or to the start of phase_id. Re-dates the goal's
+    remaining items and returns the new dates and finish. Only move items the user agreed to move."""
+    async with owner_session() as (session, user):
+        item = await get_item(session, user, item_id)
+        goal = await roadmap.load_goal(session, (await session.get(RoadmapPhase, item.phase_id)).goal_id, user.id)
+        phases = list(goal.phases)
+        anchor = next((i for p in phases for i in p.items if i.id == after_item_id), None)
+        target = next((p for p in phases if p.id == (anchor.phase_id if anchor else phase_id)), None)
+        if target is None:
+            raise ToolError("Give after_item_id or phase_id from this goal's roadmap.")
+        rest = [i for i in target.items if i.id != item.id]
+        at = rest.index(anchor) + 1 if anchor else 0
+        for n, row in enumerate(rest[:at] + [item] + rest[at:]):
+            row.order = n
+        item.phase_id = target.id
+        await session.flush()
+        session.expire(goal, ["phases"])
+        for p in phases:
+            session.expire(p, ["items"])
+        goal = await roadmap.load_goal(session, goal.id, user.id)
+        feas = await roadmap.reschedule(session, user, goal, today_for(user))
+        return {"feasibility": feasibility_view(feas), "phases": roadmap_view(goal)}
 
 
 @mcp.tool()
@@ -703,12 +760,14 @@ async def get_day_context(day: str | None = None) -> dict:
         for g in goals:
             st = await timeline.goal_status(session, user, g, d)
             tomorrow = d + timedelta(days=1)
+            minutes_today = await roadmap.goal_target_minutes(session, user, g, d)
+            minutes_tomorrow = await roadmap.goal_target_minutes(session, user, g, tomorrow)
             goal_views.append({
                 "goal_id": g.id, "title": g.title, "priority": g.priority, "intake_complete": g.intake_status == "active",
-                "planned_minutes_today": await roadmap.goal_target_minutes(session, user, g, d),
-                "routine_today": commitment.routine_blocks_on(g.routine, d),
-                "planned_minutes_tomorrow": await roadmap.goal_target_minutes(session, user, g, tomorrow),
-                "routine_tomorrow": commitment.routine_blocks_on(g.routine, tomorrow),
+                "planned_minutes_today": minutes_today,
+                "routine_today": commitment.routine_blocks_on(g.routine, d) if minutes_today else [],
+                "planned_minutes_tomorrow": minutes_tomorrow,
+                "routine_tomorrow": commitment.routine_blocks_on(g.routine, tomorrow) if minutes_tomorrow else [],
                 "timeline": st.state, "behind_days": st.behind_days,
                 "focus_items": [item_view(i, False) for i in analysis.focus_items(g, d, limit=5)],
             })
@@ -717,15 +776,17 @@ async def get_day_context(day: str | None = None) -> dict:
         existing = None
         if entry and entry.review:
             r = entry.review
-            existing = {"score": None if r.rest_day else r.total_score, "rest_day": r.rest_day,
-                        "score_explanation": (r.breakdown or {}).get("explanation"),
-                        "went_well": r.went_well, "went_badly": r.went_badly,
+            existing = {"rest_day": r.rest_day, "went_well": r.went_well, "went_badly": r.went_badly,
                         "schedule": entry.schedule, "notes": entry.free_text}
         return {
             "date": d.isoformat(), "weekday": d.strftime("%A"),
+            "day_type": await roadmap.day_type(session, user, d),
             "daily_available_hours": user.daily_available_hours,
             "weekly_focus": await weekly.current_focus(session, user, d),
+            "this_week": await weekly.week_score(session, user, weekly.week_start_of(d), d),
             "goals": goal_views,
+            "already_logged": [{"goal_id": t.goal_id, "roadmap_item_id": t.roadmap_item_id, "minutes": t.minutes,
+                                "note": t.note, "source": t.source} for t in await timelogs.for_day(session, user.id, d)],
             "plan_for_this_day": [{"plan_item_id": p.id, "time_block": p.time_block, "title": p.title,
                                    "minutes": p.minutes, "goal_id": p.goal_id, "status": p.status,
                                    "done_minutes": p.done_minutes} for p in plan],
@@ -740,16 +801,19 @@ async def save_day_review(review: DayAnalysis, day: str | None = None, schedule:
     """Save your review of the user's day (default today) and score it. `review` holds the activities with goal /
     roadmap-item links, goal_impacts (0-10 per goal), item_progress (hours to credit, completed flag), went_well,
     went_badly, tomorrow's plan and a tip. plan_status marks the day's planned blocks done / partial (with
-    done_minutes) / skipped. day_off=True records a deliberate day off (sick, holiday): not scored, doesn't break
-    the streak. Saving again for the same day replaces the previous review. Returns the daily score (0-100) with an
-    explanation of how it was computed, the per-goal breakdown, and tomorrow's plan."""
+    done_minutes) / skipped. day_off=True records a deliberate day off (sick, holiday): it's marked as a rest day, so
+    its hours come off the week's target. Saving again for the same day replaces the previous review. Returns the
+    week so far (score, hours against target, ahead or behind), the per-goal hours and ratings, and tomorrow's plan."""
     async with owner_session() as (session, user):
         d = parse_day(day, user)
+        if day_off:
+            await analysis.set_day_type(session, user, d, "rest")
         for ps in plan_status or []:
             item = await session.get(PlanItem, ps.plan_item_id)
             if item is not None and item.user_id == user.id:
                 item.status = ps.status
                 item.done_minutes = ps.done_minutes if ps.status == "partial" else None
+                await timelogs.sync_block(session, user, item)
         entry = await analysis.get_or_create_entry(session, user, d)
         if schedule is not None:
             entry.schedule = [b.model_dump() for b in schedule]
@@ -758,7 +822,8 @@ async def save_day_review(review: DayAnalysis, day: str | None = None, schedule:
         if energy is not None:
             entry.energy = energy
         result = await analysis.confirm(session, user, entry, review, used_llm=True, day_off=day_off)
-        per_goal = {k: v for k, v in result.per_goal.items() if not k.startswith("_")}
+        per_goal = {k: {f: x for f, x in v.items() if f not in ("score", "rule", "counted_minutes")}
+                    for k, v in result.per_goal.items() if not k.startswith("_")}
         tomorrow = await analysis.plan_for(session, user.id, d + timedelta(days=1))
         credited = [await session.get(RoadmapItem, p["roadmap_item_id"])
                     for p in result.per_goal.get("_item_progress", [])]
@@ -786,10 +851,10 @@ async def save_day_review(review: DayAnalysis, day: str | None = None, schedule:
                     f"Off-plan topics took {offplan} sessions this week while '{g.title}' fell behind plan.")})
         return {
             "date": d.isoformat(),
-            "score": None if result.rest_day else result.total_score,
             "rest_day": result.rest_day,
-            "score_explanation": result.breakdown.get("explanation"),
-            "breakdown": result.breakdown,
+            "bonus_minutes": result.breakdown.get("bonus_minutes", 0),
+            "time_value_reason": result.breakdown.get("time_value_reason"),
+            "this_week": await weekly.week_score(session, user, weekly.week_start_of(d), d),
             "per_goal": per_goal,
             "plan_adherence": result.adherence,
             "off_goal_minutes": result.drift_minutes,
@@ -811,8 +876,25 @@ async def set_plan_item_status(plan_item_id: int, status: Literal["done", "parti
             raise ToolError(f"No plan item {plan_item_id}.")
         item.status = status
         item.done_minutes = done_minutes if status == "partial" else None
+        await timelogs.sync_block(session, user, item)
         return {"plan_item_id": item.id, "title": item.title, "status": item.status,
                 "done_minutes": item.done_minutes}
+
+
+@mcp.tool()
+async def set_day_type(day_type: Literal["rest", "work", "normal"], day: str | None = None,
+                       goal_id: int | None = None) -> dict:
+    """Make a day (default today) a rest day or a work day whatever the routine says, or put it back to normal, for
+    every goal or just goal_id. rest sets the day's open blocks aside and takes its hours off the week's target, but
+    doesn't move the roadmap dates. work gives a rest day a usual day's time and a plan from the roadmap. Returns the
+    day's plan and the week so far."""
+    async with owner_session() as (session, user):
+        d = parse_day(day, user)
+        entry = await analysis.set_day_type(session, user, d, None if day_type == "normal" else day_type, goal_id)
+        kind = (entry.goal_day_types or {}).get(str(goal_id)) if goal_id is not None else entry.day_type
+        return {"date": d.isoformat(), "weekday": d.strftime("%A"), "day_type": kind or "normal",
+                "plan": plan_view(await analysis.plan_for(session, user.id, d)),
+                "this_week": await weekly.week_score(session, user, weekly.week_start_of(d), today_for(user))}
 
 
 def plan_view(items: list[PlanItem]) -> list[dict]:
@@ -826,7 +908,7 @@ async def plan_day(day: str | None = None, replace: bool = False) -> dict:
     """Get the plan for a day (default today), creating it from the user's routines and next roadmap items if there
     isn't one (e.g. they didn't log last night). replace=True rebuilds the unfinished blocks. The generated blocks
     only carry the roadmap item name: give each a short title and details (why, timed steps, resources,
-    done_when) via edit_plan."""
+    done_when) via edit_plan. A rest day stays empty: if the user wants to work anyway, add a block with edit_plan."""
     async with owner_session() as (session, user):
         d = parse_day(day, user)
         existing = await analysis.plan_for(session, user.id, d)
@@ -1139,7 +1221,8 @@ async def manage_sources(action: Literal["list", "add", "remove", "enable", "dis
 
 @mcp.tool()
 async def get_weekly_stats(week_start: str | None = None) -> dict:
-    """Stats for a week (Monday YYYY-MM-DD; default: current week): days scored, scores, plan blocks done, per goal
+    """Stats for a week (Monday YYYY-MM-DD; default: current week): week_score (the user's score, with hours against
+    the target and work quality), days logged, daily ratings for patterns, plan blocks done, per goal
     hours vs the hours committed in the routine, completed items and timeline status; the previous week and a
     4-week trend for comparison; patterns over the last 4 weeks (plan done by weekday and time of day, score by
     weekday and by energy, wasted time by weekday); and last week's focus points to follow up on."""
@@ -1274,7 +1357,8 @@ async def plan_topics(topic_ids: list[int], day: str | None = None) -> dict:
 async def get_study_context(day: str | None = None) -> dict:
     """What to study on a day (default today): the topics in priority order (due re-tests, carried-over weak
     subtopics, then new) with minutes for each, plus topics studied today, and knowledge items that still need
-    set_item_topics. Use the time available and the user's pace to decide how many to take on."""
+    set_item_topics. Use the time available and the user's pace to decide how many to take on. rest_day means nothing
+    is due; coming_up forecasts the next working days, and the user can start any of those topics early."""
     async with owner_session() as (session, user):
         d = parse_day(day, user)
         goals = await analysis.tracked_goals(session, user)
@@ -1290,7 +1374,12 @@ async def get_study_context(day: str | None = None) -> dict:
         return {
             "date": d.isoformat(),
             "available_minutes": sum([await roadmap.goal_target_minutes(session, user, g, d) for g in goals]),
+            "rest_day": await study.is_rest_day(session, user, goals, d),
             "topics": [{"goal_id": g.id, "goal": g.title, **topic_view(p.topic, p.mode, p.minutes)} for g, p in picked],
+            "coming_up": [{"date": u.day.isoformat(), "weekday": u.day.strftime("%A"), "minutes": u.minutes,
+                           "topics": [{"topic_id": p.topic.id, "title": p.topic.title, "mode": p.mode,
+                                       "minutes": p.minutes} for _, p in u.topics]}
+                          for u in await study.upcoming_days(session, user, goals, d)],
             "items_needing_topics": unsplit,
             "interviews_today": [{"title": title, "overall_pct": s.overall_pct, "passed": s.passed,
                                   "minutes": s.minutes} for s, title in sessions],
@@ -1318,6 +1407,13 @@ async def save_interview(topic_id: int, questions: list[InterviewAnswer], minute
         d = parse_day(day, user)
         topic = await get_topic(session, user, topic_id)
         marks = [q.model_dump() for q in questions]
+        previous = await session.scalar(
+            select(InterviewSession).where(InterviewSession.topic_id == topic.id, InterviewSession.day == d,
+                                           InterviewSession.kind == kind).order_by(InterviewSession.id.desc()).limit(1))
+        if previous is not None and previous.questions == marks:  # a retry after a dropped connection
+            return {"topic": topic.title, "percent_learned": previous.overall_pct, "passed": previous.passed,
+                    "weak_subtopics": previous.weak_concepts, "next_review_on": iso(topic.next_review_on),
+                    "continues_on": iso(topic.planned_for), "already_saved": True}
         result = mastery.evaluate(marks, topic.concepts, retest=kind == "retest")
         session.add(InterviewSession(topic_id=topic.id, day=d, kind=kind, minutes=minutes, questions=marks,
                                      overall_pct=result.overall_pct, passed=result.passed,
@@ -1325,9 +1421,14 @@ async def save_interview(topic_id: int, questions: list[InterviewAnswer], minute
         mastery.apply_result(topic, result, kind == "retest", d)
         await session.flush()
         finished = False
+        covered = 0  # a block marked done for this step may already include the session
+        if topic.roadmap_item_id is not None:
+            covered = await timelogs.item_minutes(session, user.id, d, topic.roadmap_item_id, skip_source="interview")
+        if minutes > covered:
+            await timelogs.add(session, user, d, topic.goal_id, minutes - covered, topic.roadmap_item_id, topic.title,
+                               "interview")
         if topic.roadmap_item_id is not None:
             item = await get_item(session, user, topic.roadmap_item_id)
-            item.hours_logged += minutes / 60
             finished = await study.sync_item(session, item, d)
         return {
             "topic": topic.title, "percent_learned": result.overall_pct, "passed": result.passed,
@@ -1364,21 +1465,21 @@ async def mark_roadmap_checked(goal_id: int, summary: str = "") -> dict:
 # ---------------------------------------------------------------- measurable targets (fitness and similar)
 
 async def metric_view(session: AsyncSession, goal: Goal, m: GoalMetric, today: date) -> dict:
-    entries = list(await session.scalars(select(MetricEntry).where(MetricEntry.metric_id == m.id).order_by(MetricEntry.day)))
-    latest = entries[-1].value if entries else None
-    return {"metric_id": m.id, "name": m.name, "unit": m.unit, "start_value": m.start_value,
-            "target_value": m.target_value, "latest_value": latest,
-            **metric_status(m.start_value, m.target_value, m.start_date, goal.target_date, latest, today)}
+    row = await metrics.metric_row(session, goal, m, today)
+    return {k: row[k] for k in ("metric_id", "name", "unit", "start_value", "target_value", "source", "latest_value",
+                                "state", "progress_pct", "expected_value")}
 
 
 @mcp.tool()
-async def add_metric(goal_id: int, name: str, start_value: float, target_value: float, unit: str = "") -> dict:
-    """Add a measurable target to a goal, e.g. 'Body weight' 82 to 76 kg, or '5 km time' 34 to 28 minutes."""
+async def add_metric(goal_id: int, name: str, start_value: float, target_value: float, unit: str = "",
+                     source: Literal["applications", "final_rounds", "offers", "proof_links"] | None = None) -> dict:
+    """Add a measurable target to a goal, e.g. 'Body weight' 82 to 76 kg, or 'Mock interviews' 0 to 10. A source makes
+    it count itself from the job search or the proof links; anything else is recorded with log_metric."""
     async with owner_session() as (session, user):
         goal = await get_goal(session, user, goal_id)
         today = today_for(user)
         metric = GoalMetric(goal_id=goal.id, name=name, unit=unit, start_value=start_value, target_value=target_value,
-                            start_date=today)
+                            start_date=today, source=source)
         session.add(metric)
         await session.flush()
         return await metric_view(session, goal, metric, today)
@@ -1407,7 +1508,7 @@ async def log_metric(metric_id: int, value: float, day: str | None = None, note:
 @mcp.tool()
 async def get_dashboard(weeks: int = Field(default=8, ge=2, le=26)) -> dict:
     """Data for charts of the user's progress, to draw right in the chat when they ask to see their progress or a
-    dashboard: daily scores (rest days marked), weekly score / plan-done / hours, each goal's weekly hours vs the
+    dashboard: the weekly score, plan-done and hours by week, daily ratings (patterns only), each goal's weekly hours vs the
     hours their routine planned, and each goal's progress against the agreed plan (planned vs done hours)."""
     async with owner_session() as (session, user):
         today = today_for(user)
@@ -1453,6 +1554,41 @@ async def get_dashboard(weeks: int = Field(default=8, ge=2, le=26)) -> dict:
             "streak_days": await analysis.streak_before(session, user.id, today),
             "weekly_focus": await weekly.current_focus(session, user, today),
         }
+
+
+# ---------------------------------------------------------------- job search
+
+@mcp.tool()
+async def save_application(company: str, role: str = "", stage: Literal[jobsearch.STAGES] = "applied", url: str = "",
+                           referral: str = "", next_step: str = "", notes: str = "",
+                           application_id: int | None = None) -> dict:
+    """Record a job application, or update one with application_id (only the fields you pass change). Stages: saved,
+    applied, screen, technical, final, offer, rejected, withdrawn."""
+    if url and not url.startswith(("http://", "https://")):
+        raise ToolError("url must be a full http(s) link.")
+    async with owner_session() as (session, user):
+        data = {"company": company, "role": role, "stage": stage, "url": url, "referral": referral,
+                "next_step": next_step, "notes": notes}
+        if application_id is None:
+            return jobsearch.view(await jobsearch.add(session, user, data, today_for(user)))
+        row = await session.get(JobApplication, application_id)
+        if row is None or row.user_id != user.id:
+            raise ToolError(f"No application {application_id}.")
+        jobsearch.update(row, {k: v for k, v in data.items() if v}, today_for(user))
+        return jobsearch.view(row)
+
+
+@mcp.tool()
+async def get_applications() -> dict:
+    """The job search so far: every application with its stage and next step, and counts by stage."""
+    async with owner_session() as (session, user):
+        rows = list(await session.scalars(select(JobApplication).where(JobApplication.user_id == user.id)
+                                           .order_by(JobApplication.updated_at.desc())))
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r.stage] = counts.get(r.stage, 0) + 1
+        return {"applications": [jobsearch.view(r) for r in rows], "by_stage": counts,
+                "final_rounds_reached": sum(r.reached_final for r in rows)}
 
 
 # ---------------------------------------------------------------- prompts (shortcuts in Claude's "+" menu)

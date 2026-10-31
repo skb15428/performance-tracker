@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import OpenClaude from '../components/OpenClaude'
+import QuickLog from '../components/QuickLog'
 import TaskCard from '../components/TaskCard'
-import { Button, Card, EmptyState, Input, Loading, PageHeader, ScoreRing, cx, scoreTone } from '../components/ui'
+import { Button, Card, EmptyState, Input, Loading, PageHeader, cx, scoreTone } from '../components/ui'
 import { api } from '../lib/api'
 import { addDays, fmtMinutes, prettyDate, todayIso } from '../lib/dates'
-import type { Entry, PlanItem, StudyToday } from '../lib/types'
+import type { Entry, Goal, PlanItem, StudyToday } from '../lib/types'
 
 // ---------------- Plan for the day ----------------
 
@@ -38,33 +39,42 @@ function ReviewResult({ entry }: { entry: Entry }) {
     <div className="space-y-4">
       {review.rest_day ? (
         <Card>
-          <p className="font-medium">Rest day 🌿</p>
-          <p className="text-sm text-muted">Not scored, and your streak is safe.</p>
+          {review.breakdown?.bonus_minutes ? (
+            <>
+              <p className="font-medium">Bonus day · {fmtMinutes(review.breakdown.bonus_minutes)} extra</p>
+              <p className="text-sm text-muted">You worked on a rest day. The hours count toward this week.</p>
+            </>
+          ) : (
+            <>
+              <p className="font-medium">Rest day 🌿</p>
+              <p className="text-sm text-muted">Your streak is safe.</p>
+            </>
+          )}
         </Card>
       ) : (
       <Card>
-        <div className="flex flex-wrap items-center gap-6">
-          <ScoreRing score={review.total_score} size={112} />
-          <div className="min-w-0 flex-1 space-y-2">
-            {goals.map(([id, g]) => (
-              <div key={id}>
-                <div className="flex items-center justify-between gap-2 text-sm">
-                  <span className="font-medium">{g.title}</span>
-                  <span className={cx('font-semibold tabular-nums', scoreTone(g.score * 10))}>{g.score.toFixed(1)}/10</span>
-                </div>
-                <p className="text-xs text-muted">
-                  {fmtMinutes(g.minutes)} · {g.timeline.replace('_', ' ')}
-                  {g.note && ` · ${g.note}`}
-                </p>
+        <div className="space-y-2">
+          {goals.map(([id, g]) => (
+            <div key={id}>
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="font-medium">{g.title}</span>
+                {g.extra ? (
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-300">Extra</span>
+                ) : g.llm !== null ? (
+                  <span className={cx('font-semibold tabular-nums', scoreTone(g.llm * 10))}>{g.llm}/10</span>
+                ) : null}
               </div>
-            ))}
-            {review.breakdown?.explanation && <p className="text-xs text-muted tabular-nums">{review.breakdown.explanation}</p>}
-            <p className="text-xs text-muted">
-              {review.adherence !== null && `Plan adherence ${Math.round(review.adherence * 100)}% · `}
-              {review.drift_minutes > 0 && `${fmtMinutes(review.drift_minutes)} not linked to any goal · `}
-              {review.used_llm ? 'AI-reviewed' : 'Rules-only review'}
-            </p>
-          </div>
+              <p className="text-xs text-muted">
+                {fmtMinutes(g.minutes)} · {g.timeline.replace('_', ' ')}
+                {g.note && ` · ${g.note}`}
+              </p>
+            </div>
+          ))}
+          <p className="text-xs text-muted">
+            {review.adherence !== null && `Plan adherence ${Math.round(review.adherence * 100)}% · `}
+            {review.drift_minutes > 0 && `${fmtMinutes(review.drift_minutes)} not linked to any goal · `}
+            {review.used_llm ? "Claude's rating of the work" : 'Rules-only review'}. Your score is worked out weekly.
+          </p>
         </div>
       </Card>
       )}
@@ -130,6 +140,7 @@ export default function DailyLog() {
   const day = useParams().day ?? todayIso()
   const navigate = useNavigate()
   const { data: entry, isLoading } = useQuery({ queryKey: ['entry', day], queryFn: () => api<Entry>(`/entries/${day}`) })
+  const { data: goals = [] } = useQuery({ queryKey: ['goals'], queryFn: () => api<Goal[]>('/goals') })
   const isToday = day === todayIso()
   const label = isToday ? 'today' : `${prettyDate(day, { weekday: 'long' })} (${day})`
 
@@ -154,6 +165,7 @@ export default function DailyLog() {
       {entry && (
         <div className="space-y-4">
           <DayPlan day={day} />
+          <QuickLog day={day} goals={goals.filter((g) => g.status === 'active' && g.intake_status === 'active')} />
           <DayInterviews day={day} />
           {entry.review ? (
             <ReviewResult entry={entry} />

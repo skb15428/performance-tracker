@@ -32,7 +32,7 @@ def local_timezone() -> str:
 async def main() -> None:
     email = get_settings().owner_email.lower()
     password = getpass.getpass(f"New GoalCoach password for {email}: ")
-    if len(password) < 8 or password != getpass.getpass("Repeat: "):
+    if len(password) < 10 or password != getpass.getpass("Repeat: "):
         print("Passwords must match and be at least 8 characters.")
         return
     async with SessionLocal() as session:

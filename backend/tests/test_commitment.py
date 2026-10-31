@@ -33,8 +33,8 @@ def test_rest_day_goal_does_not_drag_score():
     goals = [GoalInput(1, 4, target_minutes=90), GoalInput(2, 2, target_minutes=0)]  # goal 2 rests today
     day = score_day([ActivityInput(90, "learn", [Link(1)])], goals)
     assert day.total == 100
-    bonus = score_day([ActivityInput(90, "learn", [Link(1)]), ActivityInput(30, "build", [Link(2)])], goals)
-    assert bonus.per_goal[2].score == 10
+    extra = score_day([ActivityInput(90, "learn", [Link(1)]), ActivityInput(30, "build", [Link(2)])], goals)
+    assert extra.total == day.total and extra.per_goal[2].minutes == 30  # earns hours, doesn't move the score
 
 
 def test_rest_weekdays_from_routines():

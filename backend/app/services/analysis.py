@@ -19,7 +19,7 @@ from app.models import (
     RoadmapPhase,
     User,
 )
-from app.services import commitment, prompts, roadmap, scheduler, scoring, timeline, topics
+from app.services import commitment, prompts, roadmap, scheduler, scoring, timeline, timelogs, topics
 from app.services.llm import LLMError, get_llm
 from app.services.llm.outputs import (
     ActivityDraft,
@@ -28,10 +28,14 @@ from app.services.llm.outputs import (
     LinkDraft,
     PlanDetails,
     PlanDraft,
+    PlanStep,
     Resource,
 )
+from app.services.topics import DayTopic
 
 PLAN_BLOCK_MAX_MIN = 90
+LEARN_SHARE = 0.7  # of a study block; the rest is the interview
+STEP_CONCEPTS = 6  # subtopics named in a generated step
 KIND_KEYWORDS = [  # first match wins; used only when the AI is unavailable and the user didn't pick a kind
     ("waste", r"scroll|youtube|netflix|instagram|twitter|reddit|tiktok|procrastinat|binge"),
     ("job", r"day job|office|standup|stand-up|work meeting|client work|commute|\bjob\b"),
@@ -111,6 +115,8 @@ async def streak_before(session: AsyncSession, user_id, day: date) -> int:
         .where(DailyEntry.user_id == user_id, DailyEntry.date < day, DailyEntry.date >= day - timedelta(days=90))
     )
     logged = {d: rest for d, rest in rows}
+    marked_rest = set(await session.scalars(select(DailyEntry.date).where(
+        DailyEntry.user_id == user_id, DailyEntry.day_type == "rest", DailyEntry.date >= day - timedelta(days=90))))
     goals = list(await session.scalars(select(Goal).where(Goal.user_id == user_id, Goal.status == "active")))
     rest_wd = rest_weekdays(goals)
     streak, cur = 0, day - timedelta(days=1)
@@ -118,7 +124,7 @@ async def streak_before(session: AsyncSession, user_id, day: date) -> int:
         if cur in logged:
             if not logged[cur]:
                 streak += 1
-        elif cur.weekday() not in rest_wd:
+        elif cur.weekday() not in rest_wd and cur not in marked_rest:
             break
         cur -= timedelta(days=1)
     return streak
@@ -173,8 +179,11 @@ def rule_tomorrow(goals: list[Goal], budgets: dict[int, int], tomorrow: date) ->
     the next items up to the day's minute budget."""
     plan: list[PlanDraft] = []
     for g in goals:
+        if not budgets.get(g.id, 60):  # this goal rests that day
+            continue
         items = focus_items(g, tomorrow, limit=6)
-        blocks = commitment.routine_blocks_on(g.routine, tomorrow) if g.routine else []
+        # A rest day turned into a work day has no blocks of its own, so it borrows a usual day's.
+        blocks = commitment.routine_blocks_on(g.routine, tomorrow) or commitment.usual_blocks(g.routine)
         if blocks:
             used: set[int] = set()
             for b in blocks:
@@ -272,10 +281,72 @@ async def save_plan(session: AsyncSession, user: User, day: date, blocks: list[P
     return await plan_for(session, user.id, day)
 
 
+def study_block(block: PlanDraft, topic: DayTopic) -> None:
+    """Turn a generic block into today's topic, with the same learn-then-interview shape every time."""
+    t = topic.topic
+    block.title = t.title
+    learn = max(round(block.minutes * LEARN_SHARE), 1)
+    interview = max(block.minutes - learn, 1)
+    focus = t.weak_concepts if topic.mode == "carryover" and t.weak_concepts else [c["name"] for c in t.concepts]
+    if topic.mode == "retest":
+        steps = [PlanStep(text="Get re-tested by Claude", minutes=block.minutes)]
+        done_when = "You hold your pass in the re-test."
+    else:
+        steps = [PlanStep(text=f"Learn with Claude: {', '.join(focus[:STEP_CONCEPTS])}", minutes=learn),
+                 PlanStep(text="Get interviewed by Claude", minutes=interview)]
+        done_when = "You pass the interview: 85% overall and at least 4/5 on every core subtopic."
+    block.details = PlanDetails(why=f"Today's topic on your roadmap: {t.title}.", steps=steps, done_when=done_when,
+                                topic_id=t.id)
+
+
 async def rule_plan(session: AsyncSession, user: User, day: date) -> list[PlanDraft]:
-    """A plan for `day` from the routines (or daily budgets) and the next roadmap items, without AI."""
+    """A plan for `day` from the routines (or daily budgets), today's topics and the next roadmap items, without AI."""
     goals = await tracked_goals(session, user)
-    return rule_tomorrow(goals, await daily_targets(session, user, goals, day), day)
+    plan = rule_tomorrow(goals, await daily_targets(session, user, goals, day), day)
+    picked = [(g, dt) for g, dt in await topics.day_topics(session, user, goals, day) if dt.mode != "retest"]
+    for block in plan:
+        match = next((dt for g, dt in picked if g.id == block.goal_id
+                      and dt.topic.roadmap_item_id == block.roadmap_item_id), None)
+        if match is not None:
+            study_block(block, match)
+            picked = [(g, dt) for g, dt in picked if dt is not match]
+    return plan
+
+
+async def set_day_type(session: AsyncSession, user: User, day: date, kind: str | None,
+                       goal_id: int | None = None) -> DailyEntry:
+    """Mark a day as rest or work for every goal or just one, or None to go back to the routine. Marking rest sets the
+    open blocks aside, and undoing it brings them back, so nothing Claude planned is lost. A new work day gets a plan."""
+    goals = [g for g in await tracked_goals(session, user) if goal_id in (None, g.id)]
+    usual = sum([await roadmap.usual_minutes(session, user, g, day) for g in goals])
+    if kind == ("work" if usual else "rest"):
+        kind = None  # that's what the routine already says
+    entry = await get_or_create_entry(session, user, day)
+    if goal_id is None:
+        was, entry.day_type, entry.goal_day_types = entry.day_type, kind, {}
+    else:
+        per_goal = dict(entry.goal_day_types or {})
+        was = per_goal.pop(str(goal_id), None)
+        entry.goal_day_types = {**per_goal, str(goal_id): kind} if kind else per_goal
+    await session.flush()
+    plan = [p for p in await plan_for(session, user.id, day) if goal_id in (None, p.goal_id)]
+    if kind == "rest":
+        for p in plan:
+            if p.status == "open":
+                p.status = "skipped"
+    elif was == "rest":
+        for p in plan:
+            if p.status == "skipped":
+                p.status = "open"
+    elif was == "work" and kind is None:
+        for p in plan:
+            if p.status == "open":
+                await session.delete(p)  # back to a rest day: drop what was planned for the session
+    if kind == "work" and not plan:
+        blocks = [b for b in await rule_plan(session, user, day) if goal_id in (None, b.goal_id)]
+        await save_plan(session, user, day, blocks)
+    await session.flush()
+    return entry
 
 
 async def daily_targets(session: AsyncSession, user: User, goals: list[Goal], day: date) -> dict[int, int]:
@@ -368,14 +439,16 @@ async def confirm(
     applied = []
     for p in analysis.item_progress:
         item = items[p.roadmap_item_id]
-        item.hours_logged += p.hours
+        # Time logged in the app or by an interview is already on the item, so only the rest is new.
+        credit = max(p.hours - await timelogs.item_minutes(session, user.id, entry.date, item.id) / 60, 0)
+        item.hours_logged += credit
         # An item with unpassed study topics is only finished by passing their interviews.
         completed_now = p.completed and item.status != "done" and not await topics.unpassed_count(session, item.id)
         if completed_now:
             item.status, item.completed_at = "done", entry.date
         elif item.status == "todo" and p.hours > 0:
             item.status = "in_progress"
-        applied.append({"roadmap_item_id": p.roadmap_item_id, "hours": p.hours, "completed": completed_now})
+        applied.append({"roadmap_item_id": p.roadmap_item_id, "hours": round(credit, 3), "completed": completed_now})
 
     today_plan = await plan_for(session, user.id, entry.date)
     adherence = scoring.plan_adherence(
@@ -398,9 +471,10 @@ async def confirm(
         gs = day.per_goal[g.id]
         st = await timeline.goal_status(session, user, g, entry.date)
         note = next((gi.note for gi in analysis.goal_impacts if gi.goal_id == g.id), "")
-        per_goal[str(g.id)] = {"title": g.title, "minutes": gs.minutes, "rule": gs.rule, "llm": gs.llm,
-                               "score": gs.score, "note": note, "timeline": st.state,
-                               "behind_days": st.behind_days}
+        per_goal[str(g.id)] = {"title": g.title, "minutes": gs.minutes, "counted_minutes": gs.counted_minutes,
+                               "rule": gs.rule, "llm": gs.llm, "score": gs.score, "note": note,
+                               "timeline": st.state, "behind_days": st.behind_days,
+                               "extra": not targets[g.id] and gs.minutes > 0}
     per_goal["_item_progress"] = applied
 
     review = DailyReview(

@@ -1,12 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import OpenClaude from '../components/OpenClaude'
 import { Badge, Card, EmptyState, ErrorText, Loading, PageHeader, ProgressBar, ScoreRing, cx, scoreTone } from '../components/ui'
 import type { Tone } from '../components/ui'
 import { api } from '../lib/api'
 import { fmtMinutes, prettyDate } from '../lib/dates'
-import type { InterviewResult, StudyToday, StudyTopic, TodayTopic } from '../lib/types'
+import type { InterviewResult, Readiness, StudyToday, StudyTopic, StudyUpcoming, TodayTopic, UpcomingDay, UpcomingStep } from '../lib/types'
+
+const shortDay = { weekday: 'short', month: 'short', day: 'numeric' } as const
+const PROOF: Record<UpcomingStep['proof'], string> = { interview: 'Study', log: 'Log', deliverable: 'Task' }
 
 const MODE: Record<TodayTopic['mode'], { label: string; tone: Tone }> = {
   new: { label: 'New', tone: 'brand' },
@@ -45,38 +49,182 @@ function TopicRow({ topic, index }: { topic: TodayTopic; index: number }) {
   )
 }
 
+function SectionLabel({ children }: { children: ReactNode }) {
+  return <h2 className="mt-9 mb-3 font-display text-3xl">{children}</h2>
+}
+
+function ComingUp({ days }: { days: UpcomingDay[] }) {
+  return (
+    <ul className="divide-y divide-line rounded-3xl border border-line bg-surface">
+      {days.map((d) => (
+        <li key={d.date} className="grid grid-cols-[4.75rem_minmax(0,1fr)] gap-3 px-5 py-3.5">
+          <span className="pt-0.5 text-xs font-medium text-muted tabular-nums">{prettyDate(d.date, shortDay)}</span>
+          <div className="min-w-0 space-y-1.5">
+            {d.topics.map((t) => (
+              <Link key={t.id} to={`/study/${t.id}`} className="flex items-baseline justify-between gap-3 hover:text-accent-ink">
+                <span className="min-w-0 text-sm leading-snug font-medium">{t.title}</span>
+                <span className="shrink-0 text-xs text-muted">{t.mode === 'new' ? fmtMinutes(t.minutes) : MODE[t.mode].label}</span>
+              </Link>
+            ))}
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function RoadmapStep({ step }: { step: UpcomingStep }) {
+  const passed = step.topics.filter((t) => t.status === 'passed').length
+  const when = step.planned_start ? `${prettyDate(step.planned_start)} – ${prettyDate(step.planned_due)}` : 'Not dated yet'
+  const meta = step.topics.length ? `${passed}/${step.topics.length} topics passed` : step.needs_topics ? 'Topics not prepared yet' : PROOF[step.proof]
+  const summary = (
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="text-sm leading-snug font-medium">{step.title}</span>
+      <span className="mt-1 text-xs text-muted tabular-nums">
+        {when} · {meta}
+      </span>
+    </span>
+  )
+  if (!step.topics.length && !step.needs_topics)
+    return <div className="px-5 py-3.5">{summary}</div>
+  return (
+    <details className="group px-5 py-3.5">
+      <summary className="flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+        {summary}
+        <span aria-hidden className="text-muted transition group-open:rotate-90">
+          ›
+        </span>
+      </summary>
+      {step.topics.length > 0 ? (
+        <ul className="mt-3 space-y-1">
+          {step.topics.map((t) => (
+            <li key={t.id}>
+              <Link to={`/study/${t.id}`} className="flex items-baseline justify-between gap-3 rounded-xl px-3 py-2 text-sm transition hover:bg-surface-2">
+                <span className="min-w-0">{t.title}</span>
+                <span className="shrink-0 text-xs text-muted">{t.status === 'passed' ? 'Passed' : t.status === 'learning' ? 'In progress' : fmtMinutes(t.est_minutes)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-3">
+          <OpenClaude variant="secondary" className="!px-3 !py-1.5 !text-xs" message={`Use GoalCoach. Split roadmap item ${step.id}, "${step.title}", into study topics with all their subtopics.`}>
+            Prepare these topics in Claude
+          </OpenClaude>
+        </div>
+      )}
+    </details>
+  )
+}
+
+function ReadinessCard({ data }: { data: Readiness }) {
+  return (
+    <Card eyebrow="Interview readiness" title={`${data.passed} of ${data.total} topics proven`} className="mt-4">
+      <ProgressBar value={data.pct ?? 0} className="h-2" />
+      <p className="mt-2 text-xs text-muted">
+        {data.retests_due > 0 && `${data.retests_due} re-test${data.retests_due > 1 ? 's' : ''} due · `}
+        {data.unprepared_items > 0 ? `${data.unprepared_items} roadmap step${data.unprepared_items > 1 ? 's' : ''} still need topics` : 'Every study step has its topics'}
+      </p>
+      {data.weakest.length > 0 && (
+        <>
+          <p className="mt-4 mb-2 text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Your weakest subtopics</p>
+          <ul className="space-y-1.5 text-sm">
+            {data.weakest.map((w) => (
+              <li key={`${w.topic_id}-${w.concept}`}>
+                <Link to={`/study/${w.topic_id}`} className="flex items-baseline justify-between gap-3 hover:text-accent-ink">
+                  <span className="min-w-0">
+                    {w.concept} <span className="text-xs text-muted">· {w.topic}</span>
+                  </span>
+                  {w.score !== null && <span className="shrink-0 text-xs text-muted tabular-nums">{w.score}/5</span>}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Card>
+  )
+}
+
 export default function Study() {
   const { data, isLoading, error } = useQuery({ queryKey: ['study', 'today'], queryFn: () => api<StudyToday>('/study/today') })
+  const { data: ahead } = useQuery({ queryKey: ['study', 'upcoming'], queryFn: () => api<StudyUpcoming>('/study/upcoming') })
+  const { data: ready } = useQuery({ queryKey: ['study', 'readiness'], queryFn: () => api<Readiness>('/study/readiness') })
   if (isLoading) return <Loading />
   if (!data) return <ErrorText error={error} />
   const queue = data.topics.filter((t) => t.mode !== 'done')
   const done = data.topics.filter((t) => t.mode === 'done')
   const scores = data.interviews.map((s) => s.overall_pct)
   const average = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null
+  const days = ahead?.days ?? []
+  const steps = ahead?.steps ?? []
+  // On a rest day nothing is due, so the next working day's topics become the ones you can start early.
+  const workAhead = data.rest_day && !queue.length ? days[0] : undefined
+  const later = workAhead ? days.slice(1) : days
+  const nextStep = steps[0]
+  const taskNext = !queue.length && !workAhead && !done.length && nextStep && !nextStep.needs_topics && nextStep.proof !== 'interview'
+  const subtitle = data.rest_day
+    ? `Nothing is due today${average !== null ? ` · ${average}% average today` : ''}`
+    : `${queue.length} to cover${data.available_minutes ? ` · ${fmtMinutes(data.available_minutes)} available` : ''}${average !== null ? ` · ${average}% average today` : ''}`
   return (
     <>
-      <PageHeader
-        eyebrow={prettyDate(data.date, { weekday: 'long', month: 'long', day: 'numeric' })}
-        title="Today's topics"
-        subtitle={`${queue.length} to cover${data.available_minutes ? ` · ${fmtMinutes(data.available_minutes)} available` : ''}${average !== null ? ` · ${average}% average today` : ''}`}
-      />
-      {data.topics.length ? (
+      <PageHeader eyebrow={prettyDate(data.date, { weekday: 'long', month: 'long', day: 'numeric' })} title={data.rest_day ? 'Rest day' : "Today's topics"} subtitle={subtitle} />
+      {queue.length > 0 && (
         <div className="space-y-3">
           {queue.map((t, i) => (
             <TopicRow key={t.id} topic={t} index={i} />
           ))}
-          {done.length > 0 && <p className="pt-4 text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Studied today</p>}
+        </div>
+      )}
+      {workAhead && (
+        <section className="space-y-3">
+          {!done.length && (
+            <div className="rise rounded-3xl border border-accent/40 bg-accent-soft p-5">
+              <p className="font-medium">Feel like working anyway?</p>
+              <p className="mt-1 text-sm text-muted">Start your next topic early. It counts toward this week's hours.</p>
+            </div>
+          )}
+          <p className="pt-2 text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Next up · {prettyDate(workAhead.date, shortDay)}</p>
+          {workAhead.topics.map((t, i) => (
+            <TopicRow key={t.id} topic={t} index={i} />
+          ))}
+        </section>
+      )}
+      {taskNext && (
+        <EmptyState title={`Next up: ${nextStep.title}`}>Your roadmap's next step is a task, so topics carry on after it.</EmptyState>
+      )}
+      {!queue.length && !workAhead && !done.length && !taskNext && (
+        <EmptyState title={data.rest_day ? 'No topics prepared yet' : 'No topics for today yet'}>
+          Ask Claude to split your next roadmap item into topics and subtopics.
+          <div className="mt-5">
+            <OpenClaude message="Use GoalCoach. Prepare my next study topics with all their subtopics.">Prepare topics in Claude</OpenClaude>
+          </div>
+        </EmptyState>
+      )}
+      {done.length > 0 && (
+        <div className="space-y-3">
+          <p className="pt-4 text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Studied today</p>
           {done.map((t, i) => (
             <TopicRow key={t.id} topic={t} index={i} />
           ))}
         </div>
-      ) : (
-        <EmptyState title="No topics for today yet">
-          Ask Claude to split your next roadmap item into topics and subtopics.
-          <div className="mt-5">
-            <OpenClaude message="Use GoalCoach. Prepare today's study topics with all their subtopics.">Prepare topics in Claude</OpenClaude>
+      )}
+      {later.length > 0 && (
+        <>
+          <SectionLabel>Coming up</SectionLabel>
+          <ComingUp days={later} />
+        </>
+      )}
+      {ready && ready.total > 0 && <ReadinessCard data={ready} />}
+      {steps.length > 0 && (
+        <>
+          <SectionLabel>Your roadmap ahead</SectionLabel>
+          <div className="divide-y divide-line rounded-3xl border border-line bg-surface">
+            {steps.map((s) => (
+              <RoadmapStep key={s.id} step={s} />
+            ))}
           </div>
-        </EmptyState>
+        </>
       )}
       <p className="mt-6 text-center text-xs text-muted">
         Studied something else? Tell Claude, and it counts too.
@@ -135,7 +283,7 @@ export function TopicDetail() {
   return (
     <>
       <Link to="/study" className="text-sm text-muted hover:text-ink">
-        ← Today's topics
+        ← Study
       </Link>
       <div className="mt-3 mb-6 flex items-center justify-between gap-4">
         <div className="min-w-0">

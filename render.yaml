@@ -10,6 +10,7 @@ services:
     buildCommand: pip install uv && uv sync --frozen --no-dev
     startCommand: uv run --no-dev alembic upgrade head && uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
     healthCheckPath: /health
+    autoDeployTrigger: checksPass # only deploy a commit once its GitHub tests have passed
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
@@ -21,8 +22,6 @@ services:
         sync: false # your email; the account Claude acts as
       - key: JWT_SECRET
         generateValue: true
-      - key: FERNET_KEY
-        sync: false # from scripts/gen_keys.py
       - key: JOBS_SECRET
         generateValue: true
       - key: CORS_ORIGINS

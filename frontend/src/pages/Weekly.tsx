@@ -11,8 +11,8 @@ function Review({ r }: { r: WeeklyReview }) {
     <Card title={`Week of ${prettyDate(r.week_start, { year: 'numeric' })}`} action={<Badge>{r.stats.days_logged}/7 days logged</Badge>}>
       <div className="mb-4 grid grid-cols-3 gap-3 text-center">
         <div>
-          <p className="text-xs text-muted">Avg score</p>
-          <p className="text-xl font-bold tabular-nums">{r.stats.avg_score ?? '—'}</p>
+          <p className="text-xs text-muted">Week score</p>
+          <p className="text-xl font-bold tabular-nums">{r.stats.week_score?.score ?? r.stats.avg_score ?? '—'}</p>
         </div>
         <div>
           <p className="text-xs text-muted">Plan done</p>
@@ -86,7 +86,7 @@ export default function Weekly() {
     <>
       <PageHeader
         title="Weekly review"
-        subtitle="Written with your coach in Claude; you'll be reminded each Monday."
+        subtitle="Written with your coach in Claude. You'll get a reminder on Monday morning if email or notifications are on."
         action={<OpenClaude message="Do my weekly review">Do my weekly review in Claude</OpenClaude>}
       />
       {isLoading && <Loading />}

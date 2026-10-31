@@ -27,6 +27,7 @@ from mcp.server.auth.provider import (
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from sqlalchemy import delete, func, select
 
+from app.core import lockout
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.models import OAuthClient, OAuthRecord, User
@@ -158,9 +159,12 @@ async def complete_login(request_id: str, password: str) -> tuple[str | None, st
             return rec.data["redirect"], None
         email = get_settings().owner_email.lower()
         user = await session.scalar(select(User).where(func.lower(User.email) == email))
+        if user is not None and lockout.is_locked(user):
+            return None, "Too many wrong attempts. Try again in 15 minutes."
         verified = False
         if user is not None:
             verified, _ = PasswordHelper().verify_and_update(password, user.hashed_password)
+            lockout.record(user, verified)
         if not verified:
             attempts = rec.data.get("attempts", 0) + 1
             if attempts >= MAX_LOGIN_ATTEMPTS:

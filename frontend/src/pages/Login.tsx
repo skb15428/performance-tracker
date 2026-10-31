@@ -1,12 +1,23 @@
 import { useState, type FormEvent } from 'react'
 import { Button, ErrorText, Input, Label } from '../components/ui'
-import { login } from '../lib/api'
+import { api, login } from '../lib/api'
 
 export default function Login({ onDone }: { onDone: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
+
+  const forgot = async () => {
+    setError(null)
+    try {
+      await api('/auth/forgot-password', { method: 'POST', json: { email } })
+      setResetSent(true)
+    } catch (err) {
+      setError(err)
+    }
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -30,7 +41,7 @@ export default function Login({ onDone }: { onDone: () => void }) {
           <h1 className="text-2xl font-bold tracking-tight">GoalCoach</h1>
           <p className="mt-1 text-sm text-muted">Your progress at a glance. Coaching happens in Claude.</p>
         </div>
-        <form onSubmit={submit} className="space-y-4 rounded-2xl bg-white p-6 ring-1 ring-line">
+        <form onSubmit={submit} className="space-y-4 rounded-2xl bg-surface p-6 ring-1 ring-line">
           <label className="block">
             <Label>Email</Label>
             <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
@@ -43,6 +54,9 @@ export default function Login({ onDone }: { onDone: () => void }) {
           <Button type="submit" loading={busy} className="w-full">
             Log in
           </Button>
+          <button type="button" disabled={!email} onClick={forgot} className="block w-full text-center text-xs text-muted hover:text-ink disabled:opacity-50">
+            {resetSent ? 'If reminders by email are set up, a reset link is on its way.' : 'Forgot your password? Enter your email above, then tap here.'}
+          </button>
         </form>
       </div>
     </div>

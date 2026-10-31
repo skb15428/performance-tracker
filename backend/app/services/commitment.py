@@ -26,6 +26,14 @@ def routine_blocks_on(routine: list[dict], day: date) -> list[dict]:
     return sorted((b for b in routine or [] if wd in b.get("days", [])), key=lambda b: b.get("start", ""))
 
 
+def usual_blocks(routine: list[dict]) -> list[dict]:
+    """A typical working day's blocks, for a rest day the user chose to work."""
+    for wd in WEEKDAYS:
+        if blocks := [b for b in routine or [] if wd in b.get("days", [])]:
+            return sorted(blocks, key=lambda b: b.get("start", ""))
+    return []
+
+
 def routine_minutes_on(routine: list[dict], day: date) -> int:
     return sum(block_minutes(b.get("start", ""), b.get("end", "")) for b in routine_blocks_on(routine, day))
 

@@ -7,7 +7,10 @@ import Dashboard from './pages/Dashboard'
 import DailyLog from './pages/DailyLog'
 import GoalDetail from './pages/GoalDetail'
 import Goals from './pages/Goals'
+import JobSearch from './pages/JobSearch'
 import Login from './pages/Login'
+import Proof from './pages/Proof'
+import ResetPassword from './pages/ResetPassword'
 import SettingsPage from './pages/Settings'
 import Study, { TopicDetail } from './pages/Study'
 import Trends from './pages/Trends'
@@ -26,6 +29,7 @@ export default function App() {
     return () => window.removeEventListener('goalcoach:logout', onLogout)
   }, [qc])
 
+  if (window.location.pathname === '/reset-password') return <ResetPassword />
   if (!authed) return <Login onDone={() => setAuthed(true)} />
 
   const logout = () => {
@@ -43,6 +47,8 @@ export default function App() {
         <Route path="log/:day" element={<DailyLog />} />
         <Route path="goals" element={<Goals />} />
         <Route path="goals/:id" element={<GoalDetail />} />
+        <Route path="job-search" element={<JobSearch />} />
+        <Route path="proof" element={<Proof />} />
         <Route path="trends" element={<Trends />} />
         <Route path="weekly" element={<Weekly />} />
         <Route path="settings" element={<SettingsPage />} />

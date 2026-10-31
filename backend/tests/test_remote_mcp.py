@@ -31,7 +31,7 @@ def free_port() -> int:
 def start_server(port: int) -> tuple[subprocess.Popen, dict]:
     db = Path(tempfile.mkdtemp()) / "remote.db"
     env = {**os.environ, "DATABASE_URL": f"sqlite+aiosqlite:///{db}", "OWNER_EMAIL": "owner@example.com",
-           "PUBLIC_URL": f"http://127.0.0.1:{port}", "GEMINI_API_KEY": ""}
+           "PUBLIC_URL": f"http://127.0.0.1:{port}"}
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, check=True,
                    capture_output=True)
     subprocess.run([sys.executable, "-c", f"""

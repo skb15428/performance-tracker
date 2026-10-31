@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -6,7 +7,23 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.auth import UserCreate, UserRead, auth_backend, fastapi_users
 from app.core.config import get_settings
-from app.routers import dashboard, entries, goals, jobs, oauth_login, plan, replans, reviews, settings, study, trends
+from app.routers import (
+    applications,
+    calendar,
+    dashboard,
+    entries,
+    goals,
+    jobs,
+    oauth_login,
+    plan,
+    replans,
+    reviews,
+    settings,
+    study,
+    timelogs,
+    trends,
+)
+from app.services import background, events
 from app.services import oauth as oauth_service
 
 logging.basicConfig(level=logging.INFO)
@@ -25,11 +42,19 @@ async def lifespan(_app: FastAPI):
     if mcp_app is None:
         yield
         return
-    async with mcp_app.router.lifespan_context(mcp_app):
-        yield
+    if get_settings().uses_default_secrets:
+        logging.getLogger(__name__).error("JWT_SECRET or JOBS_SECRET still has its default value")
+    worker = asyncio.create_task(background.run_forever())
+    try:
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+    finally:
+        worker.cancel()
 
 
-app = FastAPI(title="GoalCoach API", version="0.1.0", lifespan=lifespan)
+public = bool(get_settings().public_url)  # the live deployment: the API docs stay private
+app = FastAPI(title="GoalCoach API", version="0.1.0", lifespan=lifespan, docs_url=None if public else "/docs",
+              redoc_url=None if public else "/redoc", openapi_url=None if public else "/openapi.json")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
@@ -39,15 +64,32 @@ app.add_middleware(
 )
 
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth/jwt", tags=["auth"])
+app.include_router(fastapi_users.get_reset_password_router(), prefix="/auth", tags=["auth"])
 if get_settings().allow_registration:
     app.include_router(fastapi_users.get_register_router(UserRead, UserCreate), prefix="/auth", tags=["auth"])
-for module in (goals, entries, plan, replans, trends, reviews, dashboard, settings, jobs, oauth_login, study):
+for module in (goals, entries, plan, replans, trends, reviews, dashboard, settings, jobs, oauth_login, study, timelogs,
+               applications, calendar):
     app.include_router(module.router)
 
 
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        await events.record("error", {"where": request.url.path, "error": events.describe(e)})
+        raise
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if public:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    return response
 
 
 AUDITED = ("/register", "/authorize", "/token", "/revoke", "/oauth/", "/.well-known/")

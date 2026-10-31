@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Goal, RoadmapItem, RoadmapPhase, User
+from app.models import DailyEntry, Goal, RoadmapItem, RoadmapPhase, User
 from app.services import commitment, scheduler
 from app.services.llm.outputs import RoadmapDraft
 
@@ -42,13 +42,46 @@ async def goal_hours_per_day(session: AsyncSession, user: User, goal: Goal) -> f
     return scheduler.goal_hours_per_day(budget, goal.priority, priorities)
 
 
-async def goal_target_minutes(session: AsyncSession, user: User, goal: Goal, day: date) -> int:
-    """How many minutes the user planned to spend on this goal on `day` (0 on a routine rest day)."""
+async def usual_minutes(session: AsyncSession, user: User, goal: Goal, day: date) -> int:
+    """The minutes the routine sets for this goal on `day` (0 on a routine rest day)."""
     if goal.routine:
         return commitment.routine_minutes_on(goal.routine, day)
     if has_commitment(goal):
         return round(goal.hours_per_day * 60)
     return round(await goal_hours_per_day(session, user, goal) * 60)
+
+
+async def day_types(session: AsyncSession, user: User, day: date) -> tuple[str | None, dict]:
+    """The change made to the whole day ('rest'/'work', or None if the routine decides) and to single goals."""
+    row = (await session.execute(select(DailyEntry.day_type, DailyEntry.goal_day_types).where(
+        DailyEntry.user_id == user.id, DailyEntry.date == day))).first()
+    return (row[0], row[1] or {}) if row else (None, {})
+
+
+async def day_type(session: AsyncSession, user: User, day: date, goal: Goal | None = None) -> str | None:
+    kind, per_goal = await day_types(session, user, day)
+    return per_goal.get(str(goal.id), kind) if goal is not None else kind
+
+
+async def working_day_minutes(session: AsyncSession, user: User, goal: Goal) -> int:
+    """A usual working day's time for this goal."""
+    if goal.routine:
+        return sum(commitment.block_minutes(b.get("start", ""), b.get("end", ""))
+                   for b in commitment.usual_blocks(goal.routine))
+    return round((goal.hours_per_day if has_commitment(goal) else await goal_hours_per_day(session, user, goal)) * 60)
+
+
+def adjusted_minutes(usual: int, kind: str | None, working_day: int) -> int:
+    """A day's minutes after the user's change: a rest day has none, a rest day turned into a work day gets a usual day."""
+    if kind == "rest":
+        return 0
+    return working_day if kind == "work" and not usual else usual
+
+
+async def goal_target_minutes(session: AsyncSession, user: User, goal: Goal, day: date) -> int:
+    """How many minutes the user planned to spend on this goal on `day`, after any change they made to that day."""
+    return adjusted_minutes(await usual_minutes(session, user, goal, day), await day_type(session, user, day, goal),
+                            await working_day_minutes(session, user, goal))
 
 
 async def load_goal(session: AsyncSession, goal_id: int, user_id: uuid.UUID) -> Goal | None:

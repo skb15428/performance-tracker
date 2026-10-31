@@ -12,7 +12,7 @@ from app.services.llm.outputs import IntakeTurn
 
 NO_LLM_MESSAGE = (
     "The AI coach isn't available right now (no API key configured or quota reached). "
-    "You can still build your roadmap manually in the Roadmap tab, or add your own Gemini key in Settings."
+    "You can still build your roadmap with Claude through the GoalCoach connector."
 )
 
 

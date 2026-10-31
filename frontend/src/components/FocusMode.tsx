@@ -74,26 +74,34 @@ export default function FocusMode({
   steps: Step[]
   doneWhen?: string
   onToggleStep: (index: number, done: boolean) => void
-  onComplete: () => void
-  onClose: () => void
+  onComplete: (minutes: number) => void
+  onClose: (minutes: number) => void
 }) {
   const firstOpen = steps.findIndex((s) => !s.done)
   const [current, setCurrent] = useState(firstOpen === -1 ? 0 : firstOpen)
   const [remaining, setRemaining] = useState((steps[current]?.minutes ?? 25) * 60)
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
+  const [spent, setSpent] = useState(0) // seconds the timer really ran; what counts toward the week
+  const minutes = Math.round(spent / 60)
+  const close = () => onClose(finished ? 0 : minutes)
 
   useEffect(() => {
     if (!running) return
-    const t = setInterval(() => setRemaining((s) => s - 1), 1000)
+    const t = setInterval(() => {
+      setRemaining((s) => s - 1)
+      setSpent((s) => s + 1)
+    }, 1000)
     return () => clearInterval(t)
   }, [running])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose(finished ? 0 : Math.round(spent / 60))
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, finished, spent])
 
   const goTo = (i: number) => {
     setCurrent(i)
@@ -106,7 +114,7 @@ export default function FocusMode({
     if (next === -1) {
       setFinished(true)
       setRunning(false)
-      onComplete()
+      onComplete(minutes)
     } else {
       goTo(next)
       setRunning(true)
@@ -120,7 +128,7 @@ export default function FocusMode({
         <div className="mx-auto flex min-h-dvh max-w-3xl flex-col px-5 py-6 sm:px-8">
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-semibold tracking-[0.16em] text-muted uppercase">Focus · {title}</p>
-            <Button variant="secondary" size="sm" onClick={onClose}>
+            <Button variant="secondary" size="sm" onClick={close}>
               Close
             </Button>
           </div>
@@ -129,8 +137,8 @@ export default function FocusMode({
             <div className="relative flex flex-1 flex-col items-center justify-center text-center">
               <Celebration />
               <p className="pop font-display text-6xl">Block complete</p>
-              <p className="mt-3 text-muted">Nicely done. It's marked as done; tell Claude about it tonight.</p>
-              <Button className="mt-8" onClick={onClose}>
+              <p className="mt-3 text-muted">Nicely done. The time is added to your week.</p>
+              <Button className="mt-8" onClick={close}>
                 Back to today
               </Button>
             </div>

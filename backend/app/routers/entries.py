@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import current_user
 from app.core.db import get_session
 from app.models import DailyEntry, User
-from app.schemas import ConfirmIn, DraftOut, EntryIn, EntryOut
+from app.schemas import ConfirmIn, DayTypeIn, DraftOut, EntryIn, EntryOut
 from app.services import analysis
 
 router = APIRouter(prefix="/entries", tags=["entries"])
@@ -47,6 +47,16 @@ async def save_entry(day: date, body: EntryIn, user: User = Depends(current_user
     entry.energy = body.energy
     await session.commit()
     return entry
+
+
+@router.put("/{day}/type")
+async def set_day_type(day: date, body: DayTypeIn, user: User = Depends(current_user),
+                       session: AsyncSession = Depends(get_session)):
+    """Make a day a rest day or a work day, whatever the routine says, for every goal or just goal_id. null goes back
+    to the routine."""
+    entry = await analysis.set_day_type(session, user, day, body.day_type, body.goal_id)
+    await session.commit()
+    return {"date": day, "day_type": entry.day_type, "goal_day_types": entry.goal_day_types or {}}
 
 
 @router.post("/{day}/analyze", response_model=DraftOut)

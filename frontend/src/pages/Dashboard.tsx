@@ -1,14 +1,16 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import OpenClaude from '../components/OpenClaude'
+import QuickLog from '../components/QuickLog'
 import ReplanBanner from '../components/ReplanBanner'
 import TaskCard from '../components/TaskCard'
 import { Button, Card, EmptyState, ErrorText, Loading, PageHeader, ProgressBar, ScoreRing, TimelineBadge, cx } from '../components/ui'
 import { api } from '../lib/api'
 import { addDays, fmtMinutes, prettyDate, todayIso } from '../lib/dates'
-import type { Dashboard as DashboardData, Settings, StudyToday, WeekDay } from '../lib/types'
+import type { Dashboard as DashboardData, ScorecardRow, Settings, StudyToday, StudyUpcoming, WeekDay, WeekScore } from '../lib/types'
 
 const seriesColor = (i: number) => `var(--series-${(i % 8) + 1})`
 const axis = { stroke: 'var(--chart-axis)', fontSize: 11, tickLine: false, axisLine: false }
@@ -46,40 +48,199 @@ function Stat({ label, value, sub, to, className }: { label: string; value: Reac
   )
 }
 
-const WEEK_STYLE: Record<WeekDay['state'], { ring: string; label: string }> = {
-  done: { ring: 'bg-emerald-500 text-white', label: 'Logged' },
-  rest: { ring: 'bg-surface-2 text-muted', label: 'Rest' },
-  missed: { ring: 'bg-red-500/15 text-red-600 dark:text-red-300', label: 'Missed' },
-  today: { ring: 'bg-ink text-canvas', label: 'Today' },
-  upcoming: { ring: 'border border-dashed border-line text-muted', label: 'Planned' },
+// `short` is the label shown under the date, so a day's state never depends on colour alone.
+const WEEK_STYLE: Record<WeekDay['state'], { ring: string; label: string; short: string }> = {
+  done: { ring: 'bg-emerald-500 text-white', label: 'Logged', short: 'Done' },
+  rest: { ring: 'bg-surface-2 text-muted', label: 'Rest', short: 'Rest' },
+  bonus: { ring: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300', label: 'Extra', short: 'Extra' },
+  before: { ring: 'text-muted', label: 'Not started', short: '—' },
+  covered: { ring: 'border border-emerald-500/50 text-emerald-700 dark:text-emerald-300', label: 'Covered', short: 'Fine' },
+  missed: { ring: 'bg-red-500/15 text-red-600 dark:text-red-300', label: 'Missed', short: 'Missed' },
+  today: { ring: 'bg-ink text-canvas', label: 'Today', short: 'Today' },
+  upcoming: { ring: 'border border-dashed border-line text-muted', label: 'Planned', short: 'Plan' },
 }
 
-function WeekStrip({ week }: { week: WeekDay[] }) {
+type DayChange = { day_type: 'rest' | 'work' | null; goal_id?: number }
+type GoalName = { id: number; title: string }
+
+function useDayType(date: string, onDone?: () => void) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (json: DayChange) => api(`/entries/${date}/type`, { method: 'PUT', json }),
+    onSuccess: () => {
+      qc.invalidateQueries()
+      onDone?.()
+    },
+  })
+}
+
+function DayPanel({ day, goals, onDone }: { day: WeekDay; goals: GoalName[]; onDone: () => void }) {
+  const change = useDayType(day.date, onDone)
+  const state = day.day_type === 'rest' ? "Marked as a rest day, so its hours are off the week's target."
+    : day.day_type === 'work' ? 'Marked as a work day.'
+    : day.usual ? `${fmtMinutes(day.planned_minutes)} planned.` : 'A rest day in your routine.'
+  const next = day.day_type ? null : day.usual ? 'rest' : 'work'
   return (
-    <div className="rise grid grid-cols-7 gap-1.5 rounded-3xl border border-line bg-surface p-2 sm:gap-3 sm:p-3">
-      {week.map((d) => {
-        const style = WEEK_STYLE[d.state]
-        const date = new Date(`${d.date}T12:00:00`)
-        return (
-          <div
-            key={d.date}
-            title={`${prettyDate(d.date, { weekday: 'long' })}: ${style.label}${d.score !== null ? ` · score ${Math.round(d.score)}` : ''}${d.planned_minutes ? ` · ${fmtMinutes(d.planned_minutes)} planned` : ''}`}
-            className={cx('flex flex-col items-center gap-1.5 rounded-2xl py-2 sm:py-3', d.is_today && 'bg-accent-soft')}
-          >
-            <span className="text-[10px] font-semibold tracking-wider text-muted uppercase">
-              {date.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2)}
-            </span>
-            <span className={cx('flex size-9 items-center justify-center rounded-full text-sm font-semibold tabular-nums sm:size-10', style.ring)}>
-              {date.getDate()}
-            </span>
-            <span className="text-[10px] text-muted tabular-nums">
-              {d.score !== null ? Math.round(d.score) : <span className="hidden sm:inline">{style.label}</span>}
-              {d.score === null && <span className="sm:hidden">&nbsp;</span>}
-            </span>
-          </div>
-        )
-      })}
+    <div className="mt-2 rounded-2xl bg-surface-2 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="min-w-0 text-sm">
+          <span className="font-medium">{prettyDate(day.date, { weekday: 'long' })}</span>
+          <span className="text-muted"> · {state}</span>
+        </p>
+        <Button size="sm" variant="secondary" loading={change.isPending} onClick={() => change.mutate({ day_type: next })}>
+          {next === 'rest' ? 'Make it a rest day' : next === 'work' ? 'Make it a work day' : 'Back to normal'}
+        </Button>
+      </div>
+      {goals.length > 1 && day.usual && !day.day_type && (
+        <ul className="mt-3 space-y-1 border-t border-line pt-3">
+          {goals.map((g) => {
+            const resting = day.goal_day_types[String(g.id)] === 'rest'
+            return (
+              <li key={g.id}>
+                <button className="w-full text-left text-sm text-muted hover:text-ink" onClick={() => change.mutate({ day_type: resting ? null : 'rest', goal_id: g.id })}>
+                  {resting ? `${g.title}: back to normal` : `Rest ${g.title} only`}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </div>
+  )
+}
+
+export function WeekStrip({ week, nextWeek, goals }: { week: WeekDay[]; nextWeek: WeekDay[]; goals: GoalName[] }) {
+  const [picked, setPicked] = useState<string | null>(null)
+  const [ahead, setAhead] = useState(false)
+  const days = ahead ? nextWeek : week
+  const day = days.find((d) => d.date === picked)
+  return (
+    <div className="rise rounded-3xl border border-line bg-surface p-2 sm:p-3">
+      <div className="mb-2 flex justify-center gap-1">
+        {[false, true].map((later) => (
+          <button
+            key={String(later)}
+            aria-pressed={ahead === later}
+            onClick={() => {
+              setAhead(later)
+              setPicked(null)
+            }}
+            className={cx('rounded-full px-3 py-1 text-xs font-medium transition', ahead === later ? 'bg-ink text-canvas' : 'text-muted hover:text-ink')}
+          >
+            {later ? 'Next week' : 'This week'}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1.5 sm:gap-3">
+        {days.map((d) => {
+          const style = WEEK_STYLE[d.state]
+          const date = new Date(`${d.date}T12:00:00`)
+          return (
+            <button
+              key={d.date}
+              disabled={d.state === 'before'}
+              aria-expanded={picked === d.date}
+              aria-label={`${prettyDate(d.date, { weekday: 'long' })}: ${style.label}${d.minutes ? `, ${fmtMinutes(d.minutes)} worked` : ''}`}
+              onClick={() => setPicked(picked === d.date ? null : d.date)}
+              title={`${prettyDate(d.date, { weekday: 'long' })}: ${style.label}${d.minutes ? ` · ${fmtMinutes(d.minutes)} worked` : ''}${d.planned_minutes ? ` · ${fmtMinutes(d.planned_minutes)} planned` : ''}`}
+              className={cx('flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-2 transition sm:py-3', d.is_today && 'bg-accent-soft', picked === d.date && 'ring-1 ring-accent/50')}
+            >
+              <span className="text-[10px] font-semibold tracking-wider text-muted uppercase">
+                {date.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2)}
+              </span>
+              <span className={cx('flex size-9 items-center justify-center rounded-full text-sm font-semibold tabular-nums sm:size-10', style.ring)}>
+                {date.getDate()}
+              </span>
+              <span className="text-[10px] whitespace-nowrap text-muted tabular-nums">
+                {d.minutes ? fmtMinutes(d.minutes).replace(' ', '') : style.short}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      {day ? (
+        <DayPanel day={day} goals={goals} onDone={() => setPicked(null)} />
+      ) : (
+        <p className="mt-2 text-center text-[11px] text-muted">{ahead ? 'Plan ahead: tap a day to rest it or work it.' : 'Tap a day to make it a rest day or a work day.'}</p>
+      )}
+    </div>
+  )
+}
+
+function Scorecard({ rows }: { rows: ScorecardRow[] }) {
+  const qc = useQueryClient()
+  const add = useMutation({ mutationFn: (id: number) => api(`/study/metrics/${id}/log`, { method: 'POST', json: {} }), onSuccess: () => qc.invalidateQueries() })
+  return (
+    <Card eyebrow="Your scorecard" title="What the goal is made of">
+      <ul className="space-y-4">
+        {rows.map((r) => (
+          <li key={r.id}>
+            <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+              <span className="min-w-0">{r.name}</span>
+              <span className="flex shrink-0 items-center gap-2 tabular-nums">
+                <span>
+                  {r.latest_value ?? r.start_value} <span className="text-muted">of {r.target_value}{r.unit && ` ${r.unit}`}</span>
+                </span>
+                {!r.source && (
+                  <button aria-label={`Add 1 to ${r.name}`} disabled={add.isPending} onClick={() => add.mutate(r.id)} className="rounded-full border border-line px-2 text-xs hover:border-accent">
+                    +1
+                  </button>
+                )}
+              </span>
+            </div>
+            <ProgressBar value={r.progress_pct} />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
+function ThisWeek({ week, tip, forecast }: { week: WeekScore; tip?: string; forecast?: { finish: string; target: string | null; late: boolean } }) {
+  const pace = week.score === null ? 'Your score starts after your first logged day.'
+    : week.ahead_hours > 0 ? `${week.ahead_hours}h ahead of pace, so a rest day is fine`
+    : week.ahead_hours < 0 ? `${-week.ahead_hours}h behind pace` : 'Right on pace'
+  return (
+    <Card eyebrow="This week" title="Your score">
+      <div className="flex items-center gap-5">
+        {week.score !== null ? (
+          <ScoreRing score={week.score} size={112} />
+        ) : (
+          <span className="flex size-28 shrink-0 items-center justify-center rounded-full border-8 border-surface-2 font-display text-3xl text-muted">—</span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="font-display text-4xl leading-none tabular-nums">
+            {week.hours_done}h <span className="font-sans text-sm text-muted">of {week.hours_target}h</span>
+          </p>
+          <ProgressBar value={week.hours_target ? (week.hours_done / week.hours_target) * 100 : 0} className="mt-3 h-2" />
+          <p className="mt-2 text-xs text-muted">
+            {pace}
+            {week.rest_days_marked > 0 && ` · ${week.rest_days_marked} rest day${week.rest_days_marked > 1 ? 's' : ''} marked`}
+          </p>
+        </div>
+      </div>
+      {week.goals.length > 1 && (
+        <ul className="mt-4 space-y-1 text-sm">
+          {week.goals.map((g) => (
+            <li key={g.goal_id} className="flex justify-between gap-3">
+              <span className="min-w-0 truncate">{g.title}</span>
+              <span className="shrink-0 text-xs text-muted tabular-nums">
+                {g.sessions_target ? `${g.sessions_done} of ${g.sessions_target} sessions` : `${g.hours_done}h of ${g.hours_target}h`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {week.explanation && <p className="mt-4 rounded-2xl bg-surface-2 px-3 py-2 text-xs text-muted tabular-nums">{week.explanation}</p>}
+      {forecast && (
+        <p className="mt-3 text-sm">
+          At your current pace you finish{' '}
+          <span className={forecast.late ? 'font-semibold text-red-600 dark:text-red-400' : 'font-semibold'}>{prettyDate(forecast.finish, { year: 'numeric' })}</span>
+          {forecast.target && <span className="text-muted"> · target {prettyDate(forecast.target, { year: 'numeric' })}</span>}
+        </p>
+      )}
+      {tip && <p className="mt-3 text-sm">💡 {tip}</p>}
+    </Card>
   )
 }
 
@@ -143,14 +304,54 @@ function StudySummary({ study }: { study: StudyToday }) {
   )
 }
 
-function Heatmap({ data }: { data: { date: string; score: number; rest?: boolean }[] }) {
-  const byDate = new Map(data.map((d) => [d.date, d.score]))
+function RestDayCard({ day, ahead }: { day: WeekDay; ahead?: StudyUpcoming }) {
+  const change = useDayType(day.date)
+  const next = ahead?.days[0]
+  const step = ahead?.steps[0]
+  const title = next?.topics[0]?.title ?? step?.title
+  const when = next?.date ?? step?.planned_start
+  return (
+    <div className="rise rounded-3xl border border-accent/40 bg-surface p-7 ring-1 ring-accent/20">
+      <p className="text-[11px] font-semibold tracking-[0.14em] text-accent-ink uppercase">Rest day</p>
+      <p className="mt-3 font-display text-3xl leading-tight">{day.minutes ? `${fmtMinutes(day.minutes)} of extra work` : 'Nothing is due today.'}</p>
+      <p className="mt-2 text-sm text-muted">
+        {day.minutes ? "It counts toward this week's hours, and your streak is safe." : "Enjoy the break. If you change your mind, anything you do counts toward this week's hours."}
+      </p>
+      {title && (
+        <p className="mt-4 text-sm">
+          <span className="text-muted">Next up{when ? ` · ${prettyDate(when, { weekday: 'short', month: 'short', day: 'numeric' })}` : ''} · </span>
+          <span className="font-medium">{title}</span>
+        </p>
+      )}
+      <div className="mt-6 flex flex-wrap gap-2">
+        <Button loading={change.isPending} onClick={() => change.mutate({ day_type: day.day_type ? null : 'work' })}>
+          Work today
+        </Button>
+        <Link to="/study">
+          <Button variant="secondary">See what's coming up</Button>
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+function DayOff({ day }: { day: WeekDay }) {
+  const change = useDayType(day.date)
+  return (
+    <button disabled={change.isPending} onClick={() => change.mutate({ day_type: day.day_type ? null : 'rest' })} className="block w-full py-1 text-center text-sm text-muted transition hover:text-ink disabled:opacity-50">
+      {day.day_type ? 'Changed your mind? Back to a rest day' : 'Not today? Make it a rest day'}
+    </button>
+  )
+}
+
+function Heatmap({ data }: { data: { date: string; minutes: number; rest?: boolean }[] }) {
+  const byDate = new Map(data.map((d) => [d.date, d.minutes]))
   const rest = new Set(data.filter((d) => d.rest).map((d) => d.date))
   const today = todayIso()
   const offset = (new Date(`${today}T12:00:00`).getDay() + 6) % 7
   const start = addDays(today, -offset - 17 * 7)
   const weeks = Array.from({ length: 18 }, (_, w) => Array.from({ length: 7 }, (_, d) => addDays(start, w * 7 + d)))
-  const level = (s: number | undefined) => (s === undefined ? -1 : s < 25 ? 1 : s < 50 ? 2 : s < 75 ? 3 : 4)
+  const level = (m: number | undefined) => (!m ? -1 : m < 30 ? 1 : m < 60 ? 2 : m < 120 ? 3 : 4)
   return (
     <div>
       <div className="flex gap-1 overflow-x-auto pb-1">
@@ -163,7 +364,7 @@ function Heatmap({ data }: { data: { date: string; score: number; rest?: boolean
               return (
                 <div
                   key={d}
-                  title={d > today ? '' : `${prettyDate(d, { weekday: 'short' })}: ${isRest ? 'rest day' : s === undefined ? 'not logged' : `score ${Math.round(s)}`}`}
+                  title={d > today ? '' : `${prettyDate(d, { weekday: 'short' })}: ${isRest ? 'rest day' : s ? fmtMinutes(s) : 'nothing logged'}`}
                   className={cx('size-3.5 rounded-[4px]', d > today && 'opacity-0', isRest && 'ring-1 ring-inset ring-[var(--chart-muted)]')}
                   style={{ background: isRest ? 'transparent' : l < 0 ? 'var(--chart-grid)' : `var(--seq-${l})` }}
                 />
@@ -188,13 +389,20 @@ export default function Dashboard() {
   const { data, isLoading, error } = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardData>('/dashboard/summary') })
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/me/settings') })
   const { data: study } = useQuery({ queryKey: ['study', 'today'], queryFn: () => api<StudyToday>('/study/today') })
+  const { data: ahead } = useQuery({ queryKey: ['study', 'upcoming'], queryFn: () => api<StudyUpcoming>('/study/upcoming'), enabled: !!study?.rest_day })
 
   if (isLoading) return <Loading />
   if (!data) return <ErrorText error={error} />
 
   const today = data.today ?? todayIso()
-  const loggedToday = data.latest?.date === today
+  const loggedToday = data.reviewed_today
+  const todayCell = data.week.find((d) => d.is_today)
+  const activePlan = data.today_plan.some((p) => p.status !== 'skipped')
   const goals = data.goals.filter((g) => g.intake_status === 'active')
+  const insight = goals.map((g) => g.insight).find((i) => i?.forecast_finish_at_actual_pace)
+  const forecast = insight?.forecast_finish_at_actual_pace
+    ? { finish: insight.forecast_finish_at_actual_pace, target: insight.target_date, late: insight.forecast_misses_target }
+    : undefined
   const goalIndex = new Map(data.goals.map((g, i) => [String(g.id), i]))
   const goalTitle = (id: number | null) => data.goals.find((g) => g.id === id)?.title
   const firstName = settings?.name?.split(' ')[0]
@@ -247,10 +455,17 @@ export default function Dashboard() {
         )}
       </header>
       <ReplanBanner />
+      {data.attention.map((line) => (
+        <p key={line} className="rise mb-4 rounded-2xl bg-amber-500/14 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          {line}
+        </p>
+      ))}
 
       {/* What to do now: the first thing on the page */}
       <section aria-label="Today's tasks" className="space-y-4">
-        {data.today_plan.length ? (
+        {study?.rest_day && !activePlan && todayCell ? (
+          <RestDayCard day={todayCell} ahead={ahead} />
+        ) : data.today_plan.length ? (
           data.today_plan.map((p) => <TaskCard key={p.id} block={p} goalTitle={goalTitle(p.goal_id)} highlight={p.id === firstOpen?.id} />)
         ) : (
           <div className="rise flex flex-col justify-between rounded-3xl border border-accent/40 bg-surface p-7 ring-1 ring-accent/20">
@@ -262,6 +477,8 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+        {todayCell && !loggedToday && !study?.rest_day && (todayCell.usual || todayCell.day_type === 'work') && <DayOff day={todayCell} />}
+        <QuickLog day={today} goals={goals} />
       </section>
       {study && study.topics.length > 0 && <StudySummary study={study} />}
 
@@ -273,37 +490,15 @@ export default function Dashboard() {
       </div>
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="lg:col-span-3">
-          <WeekStrip week={data.week} />
+          <WeekStrip week={data.week} nextWeek={data.next_week} goals={goals} />
         </div>
-        <div className="lg:col-span-2">{data.today_plan.length > 0 && <DayProgress plan={data.today_plan} />}</div>
+        <div className="lg:col-span-2">{activePlan && <DayProgress plan={data.today_plan} />}</div>
       </div>
 
       {/* Score */}
       <div className="grid grid-cols-1 gap-4">
-        <Card eyebrow="Last review" title={data.latest ? prettyDate(data.latest.date, { weekday: 'long' }) : undefined}>
-          {data.latest ? (
-            <>
-              <div className="flex items-center gap-5">
-                <ScoreRing score={data.latest.score} size={112} />
-                <div className="min-w-0 space-y-2 text-sm">
-                  {Object.entries(data.latest.per_goal).map(([id, g]) => (
-                    <div key={id}>
-                      <div className="flex items-center gap-2">
-                        <span className="size-2 shrink-0 rounded-full" style={{ background: seriesColor(goalIndex.get(id) ?? 0) }} />
-                        <span className="truncate">{g.title}</span>
-                      </div>
-                      <p className="pl-4 text-xs text-muted tabular-nums">{g.score.toFixed(1)} / 10</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              {data.latest.explanation && <p className="mt-4 rounded-2xl bg-surface-2 px-3 py-2 text-xs text-muted tabular-nums">{data.latest.explanation}</p>}
-              {data.latest.tip && <p className="mt-3 text-sm">💡 {data.latest.tip}</p>}
-            </>
-          ) : (
-            <p className="text-sm text-muted">Your first score appears after you log a day in Claude.</p>
-          )}
-        </Card>
+        <ThisWeek week={data.this_week} tip={data.latest?.tip} forecast={forecast} />
+        {data.scorecard.length > 0 && <Scorecard rows={data.scorecard} />}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -376,21 +571,21 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-12 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card eyebrow="Trend" title="Daily score · 30 days">
-          {data.scores.length ? (
+        <Card eyebrow="Trend" title="Weekly score">
+          {data.week_scores.length ? (
             <div className="h-52">
               <ResponsiveContainer>
-                <LineChart data={data.scores} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
+                <LineChart data={data.week_scores} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
                   <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                  <XAxis dataKey="date" {...axis} tickFormatter={(d) => prettyDate(d)} minTickGap={30} />
+                  <XAxis dataKey="week" {...axis} tickFormatter={(d) => prettyDate(d)} minTickGap={30} />
                   <YAxis {...axis} domain={[0, 100]} ticks={[0, 50, 100]} />
-                  <Tooltip {...tooltipStyle} labelFormatter={(d) => prettyDate(String(d), { weekday: 'short' })} formatter={(v) => [Math.round(Number(v)), 'Score']} />
+                  <Tooltip {...tooltipStyle} labelFormatter={(d) => `Week of ${prettyDate(String(d))}`} formatter={(v) => [Math.round(Number(v)), 'Score']} />
                   <Line type="monotone" dataKey="score" stroke="var(--series-1)" strokeWidth={2.5} dot={{ r: 3, strokeWidth: 0, fill: 'var(--series-1)' }} activeDot={{ r: 5 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <p className="text-sm text-muted">Log a few days to see your trend.</p>
+            <p className="text-sm text-muted">Your weekly scores appear here once you've logged some days.</p>
           )}
         </Card>
         <Card eyebrow="Effort" title="Hours per goal, by week">
