@@ -8,7 +8,7 @@ import type { Settings } from '../lib/types'
 export default function SettingsPage() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/me/settings') })
-  const [form, setForm] = useState({ name: '', timezone: '', reminder_time: '21:30', daily_available_hours: 3, morning_push: false })
+  const [form, setForm] = useState({ name: '', timezone: '', reminder_time: '21:30', daily_available_hours: 3, morning_push: false, email_reminders: true })
   const [pushMsg, setPushMsg] = useState<string | null>(null)
 
   useEffect(() => {
@@ -19,6 +19,7 @@ export default function SettingsPage() {
         reminder_time: data.reminder_time,
         daily_available_hours: data.daily_available_hours,
         morning_push: data.morning_push,
+        email_reminders: data.email_reminders,
       })
   }, [data])
 
@@ -76,6 +77,10 @@ export default function SettingsPage() {
             <label className="flex items-center gap-2 text-sm sm:col-span-2">
               <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={form.morning_push} onChange={(e) => setForm({ ...form, morning_push: e.target.checked })} />
               Also send me today's plan at 7:00 am
+            </label>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={form.email_reminders} onChange={(e) => setForm({ ...form, email_reminders: e.target.checked })} />
+              Email me the nightly reminder
             </label>
             <div className="flex justify-end sm:col-span-2">
               <Button type="submit" loading={save.isPending}>

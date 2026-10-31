@@ -10,6 +10,7 @@ from app.models import RoadmapItem, TrendSource, TrendSuggestion, User
 from app.schemas import TrendSourceIn, TrendSourceOut, TrendSuggestionOut
 from app.services import roadmap
 from app.services.trends.scan import scan_goal
+from app.services.push import local_now
 
 router = APIRouter(prefix="/trends", tags=["trends"])
 
@@ -29,7 +30,7 @@ async def scan_now(goal_id: int, user: User = Depends(current_user), session: As
     goal = await roadmap.load_goal(session, goal_id, user.id)
     if goal is None:
         raise HTTPException(404, "Goal not found")
-    created = await scan_goal(session, user, goal, date.today())
+    created = await scan_goal(session, user, goal, local_now(user.timezone).date())
     await session.commit()
     return created
 
@@ -49,7 +50,7 @@ async def add_to_roadmap(sid: int, user: User = Depends(current_user), session: 
                        resources=s.links, source="trend")
     roadmap.insert_after_current(goal, item)
     await session.flush()
-    await roadmap.reschedule(session, user, goal, date.today())
+    await roadmap.reschedule(session, user, goal, local_now(user.timezone).date())
     s.status = "added_to_roadmap"
     await session.commit()
     return s

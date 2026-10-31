@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.auth import UserCreate, UserRead, auth_backend, fastapi_users
 from app.core.config import get_settings
-from app.routers import dashboard, entries, goals, jobs, oauth_login, plan, replans, reviews, settings, trends
+from app.routers import dashboard, entries, goals, jobs, oauth_login, plan, replans, reviews, settings, study, trends
 from app.services import oauth as oauth_service
 
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +41,7 @@ app.add_middleware(
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth/jwt", tags=["auth"])
 if get_settings().allow_registration:
     app.include_router(fastapi_users.get_register_router(UserRead, UserCreate), prefix="/auth", tags=["auth"])
-for module in (goals, entries, plan, replans, trends, reviews, dashboard, settings, jobs, oauth_login):
+for module in (goals, entries, plan, replans, trends, reviews, dashboard, settings, jobs, oauth_login, study):
     app.include_router(module.router)
 
 

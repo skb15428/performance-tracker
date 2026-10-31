@@ -8,6 +8,12 @@ import { cx } from './ui'
 const icons: Record<string, ReactNode> = {
   today: <path d="M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10" />,
   log: <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" />,
+  study: (
+    <>
+      <path d="M2 8l10-5 10 5-10 5-10-5z" />
+      <path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5" />
+    </>
+  ),
   goals: (
     <>
       <circle cx="12" cy="12" r="9" />
@@ -32,7 +38,7 @@ const icons: Record<string, ReactNode> = {
 
 const NAV = [
   { to: '/', label: 'Today', icon: 'today', end: true },
-  { to: '/log', label: 'Day', icon: 'log' },
+  { to: '/study', label: 'Study', icon: 'study' },
   { to: '/goals', label: 'Goals', icon: 'goals' },
   { to: '/trends', label: "What's new", icon: 'trends' },
   { to: '/weekly', label: 'Weekly', icon: 'weekly' },

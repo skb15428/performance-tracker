@@ -162,6 +162,7 @@ async def materialize_roadmap(session: AsyncSession, goal: Goal, draft: RoadmapD
                 description=it.description,
                 est_hours=it.est_hours,
                 resources=[r.model_dump() for r in it.resources],
+                proof=it.proof or ("interview" if it.type in ("topic", "skill") else "deliverable"),
                 source="ai",
             )
             for i_idx, it in enumerate(p.items)

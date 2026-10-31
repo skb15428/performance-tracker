@@ -21,7 +21,8 @@ KIND_WEIGHTS = {
     "waste": 0.0,
 }
 NEUTRAL_KINDS = {"leisure", "job"}  # rest and the day job are neither drift nor waste
-ADHERENCE_WEIGHT = 0.2
+ADHERENCE_WEIGHT = 0.2  # rules-only days, when no judgement of the time is available
+TIME_VALUE_WEIGHT = 0.3
 MAX_WASTE_PENALTY = 15.0
 WASTE_PENALTY_PER_HOUR = 3.0
 MAX_STREAK_BONUS = 5.0
@@ -74,6 +75,7 @@ def score_day(
     streak: int = 0,
     llm_weight: float = 0.5,
     day_off: bool = False,
+    time_value: float | None = None,
 ) -> DayScore:
     llm_impacts = llm_impacts or {}
     goal_ids = {g.id for g in goals}
@@ -117,21 +119,27 @@ def score_day(
         per_goal[g.id] = GoalScore(round(minutes[g.id]), round(rule, 2), llm, round(score, 2))
 
     # Nothing was planned and nothing done (or the user took the day off): a rest day, not a zero.
-    if day_off or (not counted and adherence is None):
+    if day_off or (not counted and adherence is None and time_value is None):
         return DayScore(0.0, per_goal, drift, waste, adherence, rest_day=True,
                         breakdown={"rest_day": True, "explanation": "Rest day - not scored"})
 
     prio_sum = sum(g.priority for g in counted)
     goals_score = sum(per_goal[g.id].score * g.priority for g in counted) / prio_sum * 10 if prio_sum else 0.0
-    goals_weight = 1 - ADHERENCE_WEIGHT if adherence is not None else 1.0
-    base = goals_weight * goals_score + (ADHERENCE_WEIGHT * adherence * 100 if adherence is not None else 0)
+    if time_value is not None:  # judged on the value of the time, so off-plan work isn't penalised
+        side_label, side_pct, side_weight = "time use", min(max(time_value, 0), 10) * 10, TIME_VALUE_WEIGHT
+    elif adherence is not None:
+        side_label, side_pct, side_weight = "plan", adherence * 100, ADHERENCE_WEIGHT
+    else:
+        side_label, side_pct, side_weight = "", 0.0, 0.0
+    goals_weight = 1 - side_weight
+    base = goals_weight * goals_score + side_weight * side_pct
     penalty = min(waste / 60 * WASTE_PENALTY_PER_HOUR, MAX_WASTE_PENALTY)
     bonus = min(streak * 0.5, MAX_STREAK_BONUS)
     total = round(min(max(base - penalty + bonus, 0.0), 100.0), 1)
 
-    parts = [f"goals {goals_score:.0f}" + (f" × {goals_weight:.0%}" if adherence is not None else "")]
-    if adherence is not None:
-        parts.append(f"plan {adherence:.0%} × {ADHERENCE_WEIGHT:.0%}")
+    parts = [f"goals {goals_score:.0f}" + (f" × {goals_weight:.0%}" if side_weight else "")]
+    if side_weight:
+        parts.append(f"{side_label} {side_pct:.0f}% × {side_weight:.0%}")
     explanation = " + ".join(parts)
     if penalty:
         explanation += f" − {penalty:.1f} wasted time"
@@ -141,7 +149,7 @@ def score_day(
     breakdown = {
         "goals_score": round(goals_score, 1), "goals_weight": goals_weight,
         "plan_adherence": round(adherence, 2) if adherence is not None else None,
-        "plan_weight": ADHERENCE_WEIGHT if adherence is not None else 0,
+        "time_value": time_value,
         "waste_penalty": round(-penalty, 1), "streak_bonus": round(bonus, 1),
         "goals_counted": [g.id for g in counted], "explanation": explanation,
     }

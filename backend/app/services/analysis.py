@@ -19,7 +19,7 @@ from app.models import (
     RoadmapPhase,
     User,
 )
-from app.services import commitment, prompts, roadmap, scheduler, scoring, timeline
+from app.services import commitment, prompts, roadmap, scheduler, scoring, timeline, topics
 from app.services.llm import LLMError, get_llm
 from app.services.llm.outputs import (
     ActivityDraft,
@@ -369,7 +369,8 @@ async def confirm(
     for p in analysis.item_progress:
         item = items[p.roadmap_item_id]
         item.hours_logged += p.hours
-        completed_now = p.completed and item.status != "done"
+        # An item with unpassed study topics is only finished by passing their interviews.
+        completed_now = p.completed and item.status != "done" and not await topics.unpassed_count(session, item.id)
         if completed_now:
             item.status, item.completed_at = "done", entry.date
         elif item.status == "todo" and p.hours > 0:
@@ -389,6 +390,7 @@ async def confirm(
         streak=streak,
         llm_weight=get_settings().llm_weight,
         day_off=day_off,
+        time_value=analysis.time_value,
     )
 
     per_goal: dict = {}
@@ -411,7 +413,7 @@ async def confirm(
         adherence=adherence,
         used_llm=used_llm,
         rest_day=day.rest_day,
-        breakdown=day.breakdown,
+        breakdown={**day.breakdown, "time_value_reason": analysis.time_value_reason},
     )
     entry.review = review
 

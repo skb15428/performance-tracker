@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-flash-latest"
 
     jobs_secret: str = "change-me-too"
+    # Nightly email reminders (Resend). Resend's test sender only delivers to the Resend account's own address.
+    resend_api_key: str = ""
+    email_from: str = "GoalCoach <onboarding@resend.dev>"
     # Single-user app: keep sign-ups off on a public deployment (create the owner with scripts/set_password.py).
     allow_registration: bool = False
     # Public HTTPS URL of this API (e.g. https://goalcoach-api.onrender.com). When set, the MCP server is also

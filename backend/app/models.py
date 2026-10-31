@@ -34,6 +34,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     daily_available_hours: Mapped[float] = mapped_column(Float, default=3.0)
     gemini_key_enc: Mapped[str | None] = mapped_column(Text)
     last_reminded_on: Mapped[date | None] = mapped_column(Date)
+    email_reminders: Mapped[bool] = mapped_column(default=True)
 
 
 class PushSubscription(Base):
@@ -75,6 +76,7 @@ class Goal(Base):
     # What's new: broader things to keep an eye on for this goal (e.g. "AI engineer job requirements").
     watch_topics: Mapped[list] = mapped_column(JSON, default=list)
     trends_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    roadmap_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # last gap check
     context: Mapped[dict] = mapped_column(JSON, default=dict)  # facts gathered during intake
     proposed_roadmap: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -128,6 +130,8 @@ class RoadmapItem(Base):
     completed_at: Mapped[date | None] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(10), default="ai")  # ai/user/trend
     search_terms: Mapped[list] = mapped_column(JSON, default=list)  # phrases/synonyms for finding news on it
+    # How progress is proven: interview (knowledge), log (physical/habit), deliverable (projects, tasks)
+    proof: Mapped[str] = mapped_column(String(12), default="deliverable")
 
     phase: Mapped[RoadmapPhase] = relationship(back_populates="items")
 
@@ -307,3 +311,72 @@ class OAuthRecord(Base):
     client_id: Mapped[str] = mapped_column(String(100), index=True)
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     expires_at: Mapped[float] = mapped_column(Float)
+
+
+class StudyTopic(Base):
+    """One topic to learn and be interviewed on, with its subtopics (concepts)."""
+
+    __tablename__ = "study_topics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    roadmap_item_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_items.id", ondelete="CASCADE"), index=True)
+    order: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String(300))
+    concepts: Mapped[list] = mapped_column(JSON, default=list)  # [{name, core}]
+    est_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    status: Mapped[str] = mapped_column(String(10), default="new")  # new/learning/passed
+    source: Mapped[str] = mapped_column(String(10), default="roadmap")  # roadmap/offplan
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    best_pct: Mapped[float | None] = mapped_column(Float)
+    last_pct: Mapped[float | None] = mapped_column(Float)
+    concept_scores: Mapped[dict] = mapped_column(JSON, default=dict)  # {concept: average 0-5} from the latest attempt
+    weak_concepts: Mapped[list] = mapped_column(JSON, default=list)
+    planned_for: Mapped[date | None] = mapped_column(Date)  # chosen for this day; unfinished topics roll forward
+    passed_on: Mapped[date | None] = mapped_column(Date)
+    review_stage: Mapped[int] = mapped_column(Integer, default=0)  # re-tests already passed (0-3)
+    next_review_on: Mapped[date | None] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class InterviewSession(Base):
+    __tablename__ = "interview_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    topic_id: Mapped[int] = mapped_column(ForeignKey("study_topics.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(10), default="first")  # first/retest
+    minutes: Mapped[int] = mapped_column(Integer, default=0)
+    questions: Mapped[list] = mapped_column(JSON, default=list)  # [{question, concept, is_follow_up, answer_summary, score, gap}]
+    overall_pct: Mapped[float] = mapped_column(Float, default=0)
+    passed: Mapped[bool] = mapped_column(default=False)
+    concept_scores: Mapped[dict] = mapped_column(JSON, default=dict)
+    weak_concepts: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GoalMetric(Base):
+    """A measurable target for a goal, e.g. body weight or 5 km time."""
+
+    __tablename__ = "goal_metrics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    unit: Mapped[str] = mapped_column(String(20), default="")
+    start_value: Mapped[float] = mapped_column(Float)
+    target_value: Mapped[float] = mapped_column(Float)
+    start_date: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MetricEntry(Base):
+    __tablename__ = "metric_entries"
+    __table_args__ = (UniqueConstraint("metric_id", "day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    metric_id: Mapped[int] = mapped_column(ForeignKey("goal_metrics.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    value: Mapped[float] = mapped_column(Float)
+    note: Mapped[str] = mapped_column(Text, default="")
+

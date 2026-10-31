@@ -11,9 +11,11 @@ from app.models import (
     DailyEntry,
     DailyReview,
     Goal,
+    InterviewSession,
     PlanItem,
     RoadmapItem,
     RoadmapPhase,
+    StudyTopic,
     TrendSuggestion,
     User,
     WeeklyReview,
@@ -166,6 +168,15 @@ async def week_stats(session: AsyncSession, user: User, start: date, today: date
     scored = [r for r in reviews if not r.rest_day]
     scores = [float(r.total_score) for r in scored]
 
+    interviews = list(await session.scalars(
+        select(InterviewSession).join(StudyTopic).join(Goal)
+        .where(Goal.user_id == user.id, InterviewSession.day.between(start, end))))
+    study = {"topics_passed": sum(1 for s in interviews if s.passed and s.kind == "first"),
+             "topics_not_passed_yet": sum(1 for s in interviews if not s.passed and s.kind == "first"),
+             "retests_held": sum(1 for s in interviews if s.passed and s.kind == "retest"),
+             "retests_lost": sum(1 for s in interviews if not s.passed and s.kind == "retest"),
+             "average_pct": round(sum(s.overall_pct for s in interviews) / len(interviews), 1) if interviews else None}
+
     previous_review = await session.scalar(select(WeeklyReview).where(
         WeeklyReview.user_id == user.id, WeeklyReview.week_start == start - timedelta(days=7)))
     trend = [await week_basics(session, user, start - timedelta(days=7 * n), today) for n in range(3, -1, -1)]
@@ -181,6 +192,7 @@ async def week_stats(session: AsyncSession, user: User, start: date, today: date
         "plan_partial": sum(1 for s in plan_rows if s == "partial"),
         "trends_adopted": adopted or 0,
         "goals": per_goal,
+        "study": study,
         "previous_week": trend[-2],
         "last_4_weeks": trend,
         "patterns_last_4_weeks": await patterns(session, user, end, today),
@@ -213,8 +225,8 @@ def template_text(stats: dict) -> WeeklyText:
     )
 
 
-async def generate(session: AsyncSession, user: User, start: date) -> WeeklyReview:
-    stats = await week_stats(session, user, start)
+async def generate(session: AsyncSession, user: User, start: date, today: date | None = None) -> WeeklyReview:
+    stats = await week_stats(session, user, start, today)
     text = template_text(stats)
     llm = get_llm(user)
     if llm is not None and stats["days_logged"]:

@@ -18,6 +18,7 @@ def settings_out(user: User) -> SettingsOut:
     return SettingsOut(
         name=user.name, email=user.email, timezone=user.timezone, reminder_time=user.reminder_time,
         morning_push=user.morning_push, daily_available_hours=user.daily_available_hours,
+        email_reminders=user.email_reminders,
         has_own_key=bool(user.gemini_key_enc), server_llm_available=bool(s.gemini_api_key),
         vapid_public_key=s.vapid_public_key,
     )

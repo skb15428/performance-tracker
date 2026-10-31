@@ -9,6 +9,7 @@ from app.core.db import get_session
 from app.models import Goal, ReplanProposal, User
 from app.schemas import ReplanOut
 from app.services import roadmap, timeline
+from app.services.push import local_now
 
 router = APIRouter(prefix="/replans", tags=["replans"])
 
@@ -41,8 +42,8 @@ async def request_replan(goal_id: int, user: User = Depends(current_user),
         raise HTTPException(404, "Goal not found")
     if existing := await timeline.pending_replan(session, goal.id):
         existing.status = "rejected"
-    status = await timeline.goal_status(session, user, goal, date.today())
-    proposal = await timeline.build_replan(session, user, goal, status, date.today())
+    status = await timeline.goal_status(session, user, goal, local_now(user.timezone).date())
+    proposal = await timeline.build_replan(session, user, goal, status, local_now(user.timezone).date())
     if proposal is None:
         raise HTTPException(400, "Nothing left to reschedule")
     await session.commit()
@@ -55,7 +56,7 @@ async def accept(proposal_id: int, user: User = Depends(current_user), session: 
     if proposal.status != "pending":
         raise HTTPException(400, "Proposal already resolved")
     goal = await roadmap.load_goal(session, proposal.goal_id, user.id)
-    await timeline.apply_replan(session, user, goal, proposal, date.today())
+    await timeline.apply_replan(session, user, goal, proposal, local_now(user.timezone).date())
     await session.commit()
     return proposal
 

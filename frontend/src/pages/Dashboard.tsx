@@ -8,7 +8,7 @@ import TaskCard from '../components/TaskCard'
 import { Button, Card, EmptyState, ErrorText, Loading, PageHeader, ProgressBar, ScoreRing, TimelineBadge, cx } from '../components/ui'
 import { api } from '../lib/api'
 import { addDays, fmtMinutes, prettyDate, todayIso } from '../lib/dates'
-import type { Dashboard as DashboardData, Settings, WeekDay } from '../lib/types'
+import type { Dashboard as DashboardData, Settings, StudyToday, WeekDay } from '../lib/types'
 
 const seriesColor = (i: number) => `var(--series-${(i % 8) + 1})`
 const axis = { stroke: 'var(--chart-axis)', fontSize: 11, tickLine: false, axisLine: false }
@@ -120,6 +120,29 @@ function DayProgress({ plan }: { plan: DashboardData['today_plan'] }) {
   )
 }
 
+function StudySummary({ study }: { study: StudyToday }) {
+  const queue = study.topics.filter((t) => t.mode !== 'done')
+  const retests = queue.filter((t) => t.mode === 'retest').length
+  const passed = study.interviews.filter((s) => s.passed).length
+  return (
+    <Link to="/study" className="rise mt-4 flex items-center justify-between gap-4 rounded-3xl border border-line bg-surface p-5 transition hover:border-accent/40">
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold tracking-[0.14em] text-muted uppercase">Today's study</p>
+        <p className="mt-1 truncate font-display text-2xl leading-tight">
+          {queue.length ? queue.slice(0, 3).map((t) => t.title).join(' · ') : 'All topics covered'}
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          {queue.length} to cover{retests ? ` · ${retests} re-test${retests > 1 ? 's' : ''}` : ''}
+          {study.interviews.length ? ` · ${passed}/${study.interviews.length} interviews passed` : ''}
+        </p>
+      </div>
+      <span aria-hidden className="text-xl text-muted">
+        →
+      </span>
+    </Link>
+  )
+}
+
 function Heatmap({ data }: { data: { date: string; score: number; rest?: boolean }[] }) {
   const byDate = new Map(data.map((d) => [d.date, d.score]))
   const rest = new Set(data.filter((d) => d.rest).map((d) => d.date))
@@ -164,6 +187,7 @@ function Heatmap({ data }: { data: { date: string; score: number; rest?: boolean
 export default function Dashboard() {
   const { data, isLoading, error } = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardData>('/dashboard/summary') })
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/me/settings') })
+  const { data: study } = useQuery({ queryKey: ['study', 'today'], queryFn: () => api<StudyToday>('/study/today') })
 
   if (isLoading) return <Loading />
   if (!data) return <ErrorText error={error} />
@@ -239,8 +263,14 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+      {study && study.topics.length > 0 && <StudySummary study={study} />}
 
-      <h2 className="mt-10 mb-4 font-display text-3xl">Your day &amp; week</h2>
+      <div className="mt-10 mb-4 flex items-baseline justify-between gap-3">
+        <h2 className="font-display text-3xl">Your day &amp; week</h2>
+        <Link to="/log" className="text-sm text-accent-ink">
+          Day details →
+        </Link>
+      </div>
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="lg:col-span-3">
           <WeekStrip week={data.week} />

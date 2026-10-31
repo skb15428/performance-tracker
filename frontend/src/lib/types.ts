@@ -225,6 +225,7 @@ export type Settings = {
   timezone: string
   reminder_time: string
   morning_push: boolean
+  email_reminders: boolean
   daily_available_hours: number
   has_own_key: boolean
   server_llm_available: boolean
@@ -281,3 +282,58 @@ export type Dashboard = {
   new_trends: number
   weekly_focus: string[]
 }
+
+export type Concept = { name: string; core?: boolean }
+
+export type StudyTopic = {
+  id: number
+  goal_id: number
+  roadmap_item_id: number | null
+  title: string
+  concepts: Concept[]
+  est_minutes: number
+  status: 'new' | 'learning' | 'passed'
+  source: 'roadmap' | 'offplan'
+  attempts: number
+  best_pct: number | null
+  last_pct: number | null
+  concept_scores: Record<string, number>
+  weak_concepts: string[]
+  passed_on: string | null
+  next_review_on: string | null
+}
+
+export type TodayTopic = StudyTopic & { goal: string; mode: 'retest' | 'carryover' | 'new' | 'done'; minutes: number }
+
+export type InterviewResult = {
+  id: number
+  topic_id: number
+  topic: string | null
+  day: string
+  kind: 'first' | 'retest'
+  minutes: number
+  overall_pct: number
+  passed: boolean
+  concept_scores: Record<string, number>
+  weak_concepts: string[]
+  questions: { question: string; concept: string; is_follow_up?: boolean; answer_summary?: string; score: number; gap?: string }[]
+}
+
+export type StudyToday = { date: string; available_minutes: number; topics: TodayTopic[]; interviews: InterviewResult[] }
+
+export type Metric = {
+  id: number
+  name: string
+  unit: string
+  start_value: number
+  target_value: number
+  start_date: string
+  latest_value: number | null
+  entries: { day: string; value: number }[]
+  state: 'no_data' | 'no_target_date' | 'behind' | 'on_track' | 'ahead'
+  progress_pct: number
+  expected_value: number | null
+}
+
+export type GoalStudy = { items: Record<string, { passed: number; total: number }>; metrics: Metric[] }
+

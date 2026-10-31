@@ -53,3 +53,29 @@ async def test_reminders(client, monkeypatch):
         await push.run_reminders(s, monday.replace(hour=21, minute=16))
         nightly = [p for p in sent if p["title"] == "How did today go?"]
         assert len(nightly) == 1 and nightly[0]["url"] == "https://claude.ai/new?q=Log%20my%20day"
+
+
+async def test_email_reminder_uses_the_same_rules(client, monkeypatch):
+    emails: list[tuple] = []
+
+    async def fake_email(to, subject, html):
+        emails.append((to, subject, html))
+        return True
+
+    async def no_push(session, user_id, payload):
+        return 0
+
+    monkeypatch.setattr(push, "send_email", fake_email)
+    monkeypatch.setattr(push, "send_to_user", no_push)
+    uid = await setup_user(client, "email@example.com")
+    async with SessionLocal() as s:
+        await s.execute(PushSubscription.__table__.delete().where(PushSubscription.user_id == uid))
+        await s.commit()
+    async with SessionLocal() as s:
+        await push.run_reminders(s, SAT.replace(hour=21, minute=5))  # rest day: nothing
+        assert not [e for e in emails if e[0] == "email@example.com"]
+        monday = (SAT + timedelta(days=2)).replace(hour=21, minute=5)
+        await push.run_reminders(s, monday)
+        await push.run_reminders(s, monday.replace(minute=20))  # only once
+        mine = [e for e in emails if e[0] == "email@example.com"]
+        assert len(mine) == 1 and "claude.ai/new?q=Log%20my%20day" in mine[0][2]

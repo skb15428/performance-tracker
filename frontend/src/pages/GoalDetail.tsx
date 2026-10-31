@@ -1,18 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Link, useParams } from 'react-router-dom'
 import OpenClaude from '../components/OpenClaude'
 import ReplanBanner from '../components/ReplanBanner'
 import { Badge, Card, EmptyState, ErrorText, Loading, ProgressBar, cx } from '../components/ui'
+import type { Tone } from '../components/ui'
 import { api } from '../lib/api'
 import { prettyDate, todayIso } from '../lib/dates'
-import type { Goal, RoadmapItem, RoadmapOut } from '../lib/types'
+import type { Goal, GoalStudy, Metric, RoadmapItem, RoadmapOut } from '../lib/types'
 import { intakeLabel } from './Goals'
 
 const typeTone = { topic: 'brand', skill: 'green', task: 'amber', milestone: 'red' } as const
 const INTAKE_STEPS = ['Exact goal', 'Roadmap', 'Timeline + daily routine'] as const
 
-function ItemRow({ item }: { item: RoadmapItem }) {
+function ItemRow({ item, study }: { item: RoadmapItem; study?: { passed: number; total: number } }) {
   const [open, setOpen] = useState(false)
   const overdue = item.planned_due && item.planned_due < todayIso() && !['done', 'skipped'].includes(item.status)
   const pct = Math.min((item.hours_logged / item.est_hours) * 100, 100)
@@ -24,6 +26,7 @@ function ItemRow({ item }: { item: RoadmapItem }) {
           <span className={cx('text-sm font-medium', item.status === 'skipped' && 'text-muted line-through')}>{item.title}</span>
           <Badge tone={typeTone[item.type]}>{item.type}</Badge>
           {item.source === 'trend' && <Badge tone="brand">new trend</Badge>}
+          {study && <Badge tone={study.passed === study.total ? 'green' : 'zinc'}>{study.passed}/{study.total} topics passed</Badge>}
           {item.status === 'in_progress' && <Badge tone="amber">in progress</Badge>}
           {overdue && <Badge tone="red">overdue</Badge>}
           {item.status !== 'done' && item.hours_logged >= item.est_hours && <Badge tone="red">over estimate</Badge>}
@@ -59,6 +62,57 @@ function ItemRow({ item }: { item: RoadmapItem }) {
         </div>
       )}
     </li>
+  )
+}
+
+const METRIC_STATE: Record<Metric['state'], { label: string; tone: Tone }> = {
+  no_data: { label: 'No data yet', tone: 'zinc' },
+  no_target_date: { label: 'Tracking', tone: 'zinc' },
+  behind: { label: 'Behind target', tone: 'red' },
+  on_track: { label: 'On track', tone: 'green' },
+  ahead: { label: 'Ahead of target', tone: 'green' },
+}
+
+function MetricCard({ metric }: { metric: Metric }) {
+  const state = METRIC_STATE[metric.state]
+  const axis = { stroke: 'var(--chart-axis)', fontSize: 11, tickLine: false, axisLine: false }
+  const points = [{ day: metric.start_date, value: metric.start_value }, ...metric.entries.filter((e) => e.day !== metric.start_date)]
+  const low = Math.min(metric.target_value, metric.start_value, ...points.map((p) => p.value))
+  const high = Math.max(metric.target_value, metric.start_value, ...points.map((p) => p.value))
+  const pad = Math.max((high - low) * 0.15, 0.5)
+  return (
+    <Card eyebrow="Target" title={metric.name} action={<Badge tone={state.tone}>{state.label}</Badge>}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="font-display text-4xl tabular-nums">
+          {metric.latest_value ?? metric.start_value}
+          <span className="ml-1 text-base text-muted">{metric.unit}</span>
+        </span>
+        <span className="text-xs text-muted tabular-nums">
+          target {metric.target_value}
+          {metric.unit}
+          {metric.expected_value !== null && ` · ${metric.expected_value}${metric.unit} expected by now`}
+        </span>
+      </div>
+      <ProgressBar value={metric.progress_pct} className="mt-3" />
+      {metric.entries.length > 0 && (
+        <div className="mt-4 h-36">
+          <ResponsiveContainer>
+            <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
+              <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+              <XAxis dataKey="day" {...axis} tickFormatter={(d) => prettyDate(d)} minTickGap={30} />
+              <YAxis {...axis} domain={[low - pad, high + pad]} tickFormatter={(v) => String(Math.round(v))} />
+              <ReferenceLine y={metric.target_value} stroke="var(--chart-muted)" strokeDasharray="4 4" />
+              <Tooltip
+                contentStyle={{ background: 'var(--chart-surface)', border: '1px solid var(--chart-grid)', borderRadius: 14, fontSize: 12 }}
+                labelFormatter={(d) => prettyDate(String(d))}
+                formatter={(v) => [`${v}${metric.unit}`, metric.name]}
+              />
+              <Line type="monotone" dataKey="value" stroke="var(--series-1)" strokeWidth={2.5} dot={{ r: 3, strokeWidth: 0, fill: 'var(--series-1)' }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -125,10 +179,12 @@ function Journey({ phases }: { phases: RoadmapOut['phases'] }) {
 
 function Roadmap({ goalId }: { goalId: number }) {
   const { data, isLoading } = useQuery({ queryKey: ['roadmap', goalId], queryFn: () => api<RoadmapOut>(`/goals/${goalId}/roadmap`) })
+  const { data: study } = useQuery({ queryKey: ['study', 'goal', goalId], queryFn: () => api<GoalStudy>(`/study/goals/${goalId}`) })
   if (isLoading || !data) return <Loading />
   if (!data.phases.length) return <EmptyState title="No roadmap yet" />
   return (
     <div className="space-y-4">
+      {study?.metrics.map((m) => <MetricCard key={m.id} metric={m} />)}
       <Journey phases={data.phases} />
       {data.phases.map((phase, i) => (
         <Card
@@ -148,7 +204,7 @@ function Roadmap({ goalId }: { goalId: number }) {
         >
           <ul className="space-y-2">
             {phase.items.map((item) => (
-              <ItemRow key={item.id} item={item} />
+              <ItemRow key={item.id} item={item} study={study?.items[String(item.id)]} />
             ))}
           </ul>
         </Card>

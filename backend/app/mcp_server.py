@@ -31,10 +31,14 @@ from app.models import (
     DailyEntry,
     DailyReview,
     Goal,
+    GoalMetric,
+    InterviewSession,
+    MetricEntry,
     PlanItem,
     ReplanProposal,
     RoadmapItem,
     RoadmapPhase,
+    StudyTopic,
     TrendItem,
     TrendSource,
     TrendSuggestion,
@@ -42,8 +46,10 @@ from app.models import (
     WeeklyReview,
 )
 from app.routers.goals import goal_out
-from app.services import analysis, commitment, roadmap, timeline, weekly
+from app.services import analysis, commitment, mastery, roadmap, timeline, weekly
+from app.services import topics as study
 from app.services.llm.outputs import DayAnalysis, PlanDetails, ReplanDraft, Resource, RoadmapDraft
+from app.services.metrics import metric_status
 from app.services.push import local_now
 from app.services.trends.feeds import USER_SOURCE_WEIGHT, ensure_default_sources, ingest_all
 from app.services.trends.scan import rank_candidates, search_terms
@@ -83,18 +89,46 @@ settled; never confirm a checkpoint without a clear "yes" from the user.
 Then summarise the agreed plan: goal, roadmap phases with dates, routine, target date.
 If the user later wants to change the goal, roadmap or commitment, repeat that checkpoint.
 
+GOAL TYPES: every roadmap item has a proof type. interview = knowledge the user learns from you and proves in an
+interview. log = physical or habit work you cannot teach (running, gym, sleep): the user just reports it and you judge
+it. deliverable = projects, applications and tasks, done when the outcome is reported, with a link if there is one. Set
+proof in set_roadmap. For physical goals, turn "be fit" into numbers during intake and add them with add_metric, and
+record new measurements with log_metric when the user mentions them. Give general fitness guidance, not medical advice.
+
+STUDY: get_study_context shows today's topics. If an item is listed in items_needing_topics, split it first with
+set_item_topics: all subtopics needed for depth and breadth, with honest minutes. You decide how many topics fit the
+available time at the user's pace; change the selection with plan_topics. If the user studies something else, call
+add_study_topic. It counts fully. The user may name specific subtopics; focus on those.
+LEARN MODE: the user is the interviewer and asks you anything on the topic. Answer accurately and in depth, with code
+when useful. Point out subtopics they haven't asked about yet so breadth isn't missed.
+INTERVIEW MODE: you are a strict senior interviewer and the user answers. Ask one question at a time, wait for the
+answer, and follow up on it. Give no hints or answers until the end. Cover every core subtopic (weak_concepts only when
+mode is carryover; 3-4 short questions when mode is retest, with kind="retest"). Mark each answer 0-5: 0 wrong, 3
+correct but shallow, 4 solid with reasons, 5 senior level with trade-offs. Never soften marks to be kind. Then call
+save_interview, tell them the % learned and verdict exactly as returned, and explain each gap. The server decides pass
+or fail; don't overrule it.
+VOICE: the user may talk to you in voice mode. Then use short natural sentences, with no tables, markdown or long lists,
+and describe code in words. If an answer sounds cut off or unclear, ask them to repeat it rather than marking it down.
+Save interviews with the tool as usual; if it fails, say so plainly.
+
 NIGHTLY REVIEW: call get_day_context(date). If the user hasn't described their day, ask for it (time blocks + notes).
 Ask which of the day's planned blocks they did: done, partly (how many minutes) or skipped.
-Steps they ticked in the dashboard show as details.steps[].done in plan_for_this_day; use them. Then analyse: split into activities (kind: learn/build/ship/network/
-apply/admin/job/leisure/waste/other; day job = job, rest/meals/family/exercise = leisure, doom-scrolling = waste),
+Steps they ticked in the dashboard show as details.steps[].done in plan_for_this_day; use them. Then analyse: split
+into activities (kind: learn/build/ship/network/apply/admin/job/leisure/waste/other; day job = job, rest/meals/family
+= leisure, doom-scrolling = waste; exercise is leisure unless a goal covers it, then link it to that goal as other),
 link each to the goal(s) and roadmap item it advanced (relevance 0-1, reason), rate each goal's progress 0-10
 (calibrated: 2-4 is a normal light day), credit hours to roadmap items, list 2-4 went_well and went_badly points,
 write tomorrow's time-blocked plan by filling each goal's routine_tomorrow blocks with the next/overdue roadmap
 items (if a goal has no routine, fit its planned_minutes_tomorrow). Make every block concrete and easy to follow: a short title (max ~8 words) plus details:
 why (one sentence linking it to the goal), 2-5 ordered steps with minutes that add up to the block, 1-3 resources
 with real links, and done_when (a checkable finish line, e.g. "your output matches PyTorch on a 4-token example").
-Before saving, ask if tomorrow is different (meetings, travel) and adjust. Then
-one tip. Call save_day_review and present the score with its one-line score_explanation, the score per goal, the
+Use get_study_context for tomorrow's date to fill knowledge blocks. Before saving, ask if tomorrow is different
+(meetings, travel) and adjust. Add one tip. Rate time_value 0-10 with time_value_reason: were the day's available hours
+well used, and was the work worth it for the goals, planned or not? Valuable off-plan learning scores high; low-value
+busywork scores low even if planned. Include study sessions as activities, but leave their hours out of item_progress
+because save_interview already credited them. Unfinished topics roll forward by themselves. Judge log goals on what
+was reported against the routine and target. If off-plan work keeps delaying the main path, say so once and show the
+effect on the finish date. Call save_day_review and present the score with its one-line score_explanation, the score per goal, the
 good/bad points and tomorrow's plan. A rest day has no score: just acknowledge it and show tomorrow's plan.
 If it returns items_over_estimate, ask whether each is done or how many more hours it needs, then call
 update_roadmap_item (status="done", or est_hours = logged + extra) with reschedule=True and mention any date change.
@@ -113,6 +147,10 @@ previously_suggested), call record_trend_suggestions, and present each with why 
 the finish-date effect it returns. Then resolve_trend_suggestion add/dismiss per the user's answer.
 If get_overview shows trends_check_due for a goal, offer once: "Want me to check what's new for <goal>?"
 The user can add their own sources (newsletters, blogs, GitHub topics) with manage_sources.
+
+ROADMAP CHECK: if a goal shows roadmap_check_due, include this in the next weekly review (or do it when asked): search
+current job postings or standards for the goal, compare them with the roadmap, list what's missing, and add only what
+the user approves with add_roadmap_item and set_item_topics. Then call mark_roadmap_checked.
 
 WEEKLY REVIEW: if get_overview shows weekly_review_due_for_week, offer it once. Call get_weekly_stats for that
 week. Start by following up last_week_focus: ask (or infer from the stats) whether each was kept. Then write a candid
@@ -220,7 +258,7 @@ def iso(d: date | None) -> str | None:
 def item_view(i: RoadmapItem, with_details: bool = True) -> dict:
     view = {"id": i.id, "type": i.type, "title": i.title, "status": i.status, "est_hours": i.est_hours,
             "hours_logged": round(i.hours_logged, 2), "planned_start": iso(i.planned_start),
-            "planned_due": iso(i.planned_due), "source": i.source}
+            "planned_due": iso(i.planned_due), "source": i.source, "proof": i.proof}
     if over_estimate(i):
         view["over_estimate"] = True
     if with_details:
@@ -284,6 +322,13 @@ async def goal_summary(session: AsyncSession, user: User, goal: Goal) -> dict:
     data["success_criteria"] = goal.success_criteria
     data["commitment"] = commitment_view(goal)
     data["intake"] = intake_checklist(goal)
+    rc = goal.roadmap_checked_at
+    if rc is not None and rc.tzinfo is None:
+        rc = rc.replace(tzinfo=timezone.utc)
+    data["roadmap_check_due"] = goal.intake_status == "active" and (
+        rc is None or datetime.now(timezone.utc) - rc > timedelta(days=30))
+    metrics = await session.scalars(select(GoalMetric).where(GoalMetric.goal_id == goal.id))
+    data["metrics"] = [await metric_view(session, goal, m, today_for(user)) for m in metrics]
     checked = goal.trends_checked_at
     if checked is not None and checked.tzinfo is None:
         checked = checked.replace(tzinfo=timezone.utc)
@@ -594,13 +639,20 @@ async def add_roadmap_item(goal_id: int, title: str, est_hours: float = 2, descr
 async def update_roadmap_item(item_id: int, status: Literal["todo", "in_progress", "done", "skipped"] | None = None,
                               title: str | None = None, description: str | None = None,
                               est_hours: float | None = None, hours_logged: float | None = None,
-                              reschedule: bool = False) -> dict:
+                              reschedule: bool = False, override: bool = False,
+                              proof: Literal["interview", "log", "deliverable"] | None = None) -> dict:
     """Edit a roadmap item (mark done/skipped, fix estimates, correct logged hours). For an item that ran over its
     estimate, ask the user whether it's done or how many more hours it needs, then set status="done" or
     est_hours = hours_logged + extra. reschedule=True re-dates the goal's remaining items afterwards (the finish
-    date may move; tell the user)."""
+    date may move; tell the user). An item with unpassed topics can't be marked done: pass its interviews, or set
+    override=True only if the user explicitly asks to skip them."""
     async with owner_session() as (session, user):
         item = await get_item(session, user, item_id)
+        if status == "done" and not override and await study.unpassed_count(session, item.id):
+            raise ToolError("This item still has unpassed topics. Pass their interviews, or ask the user whether to "
+                            "override.")
+        if proof is not None:
+            item.proof = proof
         for field, value in {"title": title, "description": description, "est_hours": est_hours,
                              "hours_logged": hours_logged}.items():
             if value is not None:
@@ -719,6 +771,19 @@ async def save_day_review(review: DayAnalysis, day: str | None = None, schedule:
             st = await timeline.goal_status(session, user, g, d + timedelta(days=1))
             if line := timeline.alert(g, st, await timeline.diagnose(session, user, g, d + timedelta(days=1), st)):
                 alerts.append({"goal_id": g.id, "message": line})
+            for m in await session.scalars(select(GoalMetric).where(GoalMetric.goal_id == g.id)):
+                view = await metric_view(session, g, m, d)
+                if view["state"] == "behind":
+                    alerts.append({"goal_id": g.id, "message": (
+                        f"'{m.name}' is behind: {view['latest_value']}{m.unit} now, about "
+                        f"{view['expected_value']}{m.unit} expected by today.")})
+            offplan = await session.scalar(
+                select(func.count()).select_from(InterviewSession).join(StudyTopic)
+                .where(StudyTopic.goal_id == g.id, StudyTopic.source == "offplan",
+                       InterviewSession.day >= d - timedelta(days=6)))
+            if offplan >= 3 and st.state == "behind":
+                alerts.append({"goal_id": g.id, "message": (
+                    f"Off-plan topics took {offplan} sessions this week while '{g.title}' fell behind plan.")})
         return {
             "date": d.isoformat(),
             "score": None if result.rest_day else result.total_score,
@@ -1121,6 +1186,222 @@ async def weekly_review_due(session: AsyncSession, user: User, today: date) -> s
     return last_start.isoformat() if logged and not has_review else None
 
 
+# ---------------------------------------------------------------- study: learn + interview
+
+class ConceptIn(BaseModel):
+    name: str = Field(description="A subtopic, e.g. 'Dijkstra' for the topic 'Graphs'")
+    core: bool = Field(default=True, description="Core subtopics must be proven to pass; false = nice to know")
+
+
+class TopicIn(BaseModel):
+    title: str
+    concepts: list[ConceptIn] = Field(description="All subtopics needed for depth and breadth")
+    est_minutes: int = Field(default=30, ge=5, le=600, description="Learning + interview time at the user's pace")
+
+
+def concept_dicts(concepts: list[ConceptIn]) -> list[dict]:
+    return [c.model_dump() for c in concepts]
+
+
+def topic_view(t: StudyTopic, mode: str | None = None, minutes: int | None = None) -> dict:
+    view = {"topic_id": t.id, "title": t.title, "status": t.status, "source": t.source, "concepts": t.concepts,
+            "weak_concepts": t.weak_concepts, "concept_scores": t.concept_scores, "last_pct": t.last_pct,
+            "best_pct": t.best_pct, "attempts": t.attempts, "next_review_on": iso(t.next_review_on),
+            "roadmap_item_id": t.roadmap_item_id}
+    if mode:
+        view |= {"mode": mode, "minutes": minutes}
+    return view
+
+
+async def get_topic(session: AsyncSession, user: User, topic_id: int) -> StudyTopic:
+    topic = await session.scalar(select(StudyTopic).join(Goal).where(StudyTopic.id == topic_id, Goal.user_id == user.id))
+    if topic is None:
+        raise ToolError(f"No study topic with id {topic_id}.")
+    return topic
+
+
+@mcp.tool()
+async def set_item_topics(item_id: int, topics: list[TopicIn]) -> dict:
+    """Split a knowledge roadmap item into study topics, each with all its subtopics and a time estimate. Replaces
+    topics not yet attempted; topics with interview history are kept. Marks the item as interview-proven."""
+    async with owner_session() as (session, user):
+        item = await get_item(session, user, item_id)
+        phase = await session.get(RoadmapPhase, item.phase_id)
+        existing = await study.item_topics(session, item.id)
+        for t in existing:
+            if t.attempts == 0:
+                await session.delete(t)
+        kept = {t.title.strip().lower() for t in existing if t.attempts}
+        order = len(kept)
+        for t in topics:
+            if t.title.strip().lower() not in kept:
+                session.add(StudyTopic(goal_id=phase.goal_id, roadmap_item_id=item.id, order=order, title=t.title,
+                                       concepts=concept_dicts(t.concepts), est_minutes=t.est_minutes))
+                order += 1
+        item.proof = "interview"
+        await session.flush()
+        return {"item_id": item.id, "topics": [topic_view(t) for t in await study.item_topics(session, item.id)]}
+
+
+@mcp.tool()
+async def add_study_topic(goal_id: int, title: str, concepts: list[ConceptIn], est_minutes: int = 30,
+                          roadmap_item_id: int | None = None) -> dict:
+    """Add a topic the user chose to study today, outside the plan. It can be interviewed and scored like any other
+    and counts for today. Give roadmap_item_id if it belongs to a roadmap item."""
+    async with owner_session() as (session, user):
+        goal = await get_goal(session, user, goal_id)
+        if roadmap_item_id is not None:
+            await get_item(session, user, roadmap_item_id)
+        topic = StudyTopic(goal_id=goal.id, roadmap_item_id=roadmap_item_id, title=title, source="offplan",
+                           concepts=concept_dicts(concepts), est_minutes=est_minutes, planned_for=today_for(user))
+        session.add(topic)
+        await session.flush()
+        return topic_view(topic)
+
+
+@mcp.tool()
+async def plan_topics(topic_ids: list[int], day: str | None = None) -> dict:
+    """Choose which topics to cover on a day (default today). Use it when you judge a different amount fits the
+    user's time and pace. Anything unfinished rolls forward automatically."""
+    async with owner_session() as (session, user):
+        d = parse_day(day, user)
+        for tid in topic_ids:
+            (await get_topic(session, user, tid)).planned_for = d
+        return {"date": d.isoformat(), "planned_topic_ids": topic_ids}
+
+
+@mcp.tool()
+async def get_study_context(day: str | None = None) -> dict:
+    """What to study on a day (default today): the topics in priority order (due re-tests, carried-over weak
+    subtopics, then new) with minutes for each, plus topics studied today, and knowledge items that still need
+    set_item_topics. Use the time available and the user's pace to decide how many to take on."""
+    async with owner_session() as (session, user):
+        d = parse_day(day, user)
+        goals = await analysis.tracked_goals(session, user)
+        picked = await study.day_topics(session, user, goals, d)
+        unsplit = []
+        for g in goals:
+            for i in analysis.focus_items(g, d, limit=3):
+                if i.proof == "interview" and not await study.item_topics(session, i.id):
+                    unsplit.append({"item_id": i.id, "goal_id": g.id, "title": i.title})
+        sessions = list(await session.execute(
+            select(InterviewSession, StudyTopic.title).join(StudyTopic).join(Goal)
+            .where(Goal.user_id == user.id, InterviewSession.day == d)))
+        return {
+            "date": d.isoformat(),
+            "available_minutes": sum([await roadmap.goal_target_minutes(session, user, g, d) for g in goals]),
+            "topics": [{"goal_id": g.id, "goal": g.title, **topic_view(p.topic, p.mode, p.minutes)} for g, p in picked],
+            "items_needing_topics": unsplit,
+            "interviews_today": [{"title": title, "overall_pct": s.overall_pct, "passed": s.passed,
+                                  "minutes": s.minutes} for s, title in sessions],
+        }
+
+
+class InterviewAnswer(BaseModel):
+    question: str
+    concept: str = Field(description="The subtopic tested, using the name from the topic's concepts")
+    is_follow_up: bool = False
+    answer_summary: str = Field(default="", description="A short summary of the user's answer")
+    score: float = Field(ge=0, le=5, description="0 wrong, 3 correct but shallow, 4 solid with reasons, "
+                                                 "5 senior level with trade-offs")
+    gap: str = Field(default="", description="What was missing")
+
+
+@mcp.tool()
+async def save_interview(topic_id: int, questions: list[InterviewAnswer], minutes: int = 0,
+                         kind: Literal["first", "retest"] = "first", day: str | None = None) -> dict:
+    """Save a finished interview, marked honestly. The server decides pass or fail: at least 85% overall and every
+    core subtopic at 4/5 or better, with follow-ups in a first interview. minutes = time spent learning + interviewing
+    on this topic; it's credited to the roadmap item, so don't credit it again in save_day_review. Returns the
+    verdict, % learned, weak subtopics and the next review date."""
+    async with owner_session() as (session, user):
+        d = parse_day(day, user)
+        topic = await get_topic(session, user, topic_id)
+        marks = [q.model_dump() for q in questions]
+        result = mastery.evaluate(marks, topic.concepts, retest=kind == "retest")
+        session.add(InterviewSession(topic_id=topic.id, day=d, kind=kind, minutes=minutes, questions=marks,
+                                     overall_pct=result.overall_pct, passed=result.passed,
+                                     concept_scores=result.concept_scores, weak_concepts=result.weak_concepts))
+        mastery.apply_result(topic, result, kind == "retest", d)
+        await session.flush()
+        finished = False
+        if topic.roadmap_item_id is not None:
+            item = await get_item(session, user, topic.roadmap_item_id)
+            item.hours_logged += minutes / 60
+            finished = await study.sync_item(session, item, d)
+        return {
+            "topic": topic.title, "percent_learned": result.overall_pct, "passed": result.passed,
+            "verdict": result.reason, "concept_scores": result.concept_scores, "weak_subtopics": result.weak_concepts,
+            "next_review_on": iso(topic.next_review_on), "continues_on": iso(topic.planned_for),
+            "roadmap_item_finished": finished,
+        }
+
+
+@mcp.tool()
+async def get_mastery(goal_id: int) -> dict:
+    """How deeply each roadmap item is covered: topics passed, % learned, weak subtopics, and re-tests."""
+    async with owner_session() as (session, user):
+        goal = await get_goal(session, user, goal_id)
+        items = []
+        for i in roadmap.ordered_items(goal):
+            rows = await study.item_topics(session, i.id)
+            if rows:
+                items.append({"item_id": i.id, "title": i.title, "passed": sum(t.status == "passed" for t in rows),
+                              "total": len(rows), "topics": [topic_view(t) for t in rows]})
+        return {"goal_id": goal.id, "items": items}
+
+
+@mcp.tool()
+async def mark_roadmap_checked(goal_id: int, summary: str = "") -> dict:
+    """Record that the monthly roadmap check was done, after comparing the roadmap with current requirements."""
+    async with owner_session() as (session, user):
+        goal = await get_goal(session, user, goal_id)
+        goal.roadmap_checked_at = datetime.now(timezone.utc)
+        goal.context = {**(goal.context or {}), "last_roadmap_check": summary[:500]} if summary else goal.context
+        return {"goal_id": goal.id, "checked_on": today_for(user).isoformat()}
+
+
+# ---------------------------------------------------------------- measurable targets (fitness and similar)
+
+async def metric_view(session: AsyncSession, goal: Goal, m: GoalMetric, today: date) -> dict:
+    entries = list(await session.scalars(select(MetricEntry).where(MetricEntry.metric_id == m.id).order_by(MetricEntry.day)))
+    latest = entries[-1].value if entries else None
+    return {"metric_id": m.id, "name": m.name, "unit": m.unit, "start_value": m.start_value,
+            "target_value": m.target_value, "latest_value": latest,
+            **metric_status(m.start_value, m.target_value, m.start_date, goal.target_date, latest, today)}
+
+
+@mcp.tool()
+async def add_metric(goal_id: int, name: str, start_value: float, target_value: float, unit: str = "") -> dict:
+    """Add a measurable target to a goal, e.g. 'Body weight' 82 to 76 kg, or '5 km time' 34 to 28 minutes."""
+    async with owner_session() as (session, user):
+        goal = await get_goal(session, user, goal_id)
+        today = today_for(user)
+        metric = GoalMetric(goal_id=goal.id, name=name, unit=unit, start_value=start_value, target_value=target_value,
+                            start_date=today)
+        session.add(metric)
+        await session.flush()
+        return await metric_view(session, goal, metric, today)
+
+
+@mcp.tool()
+async def log_metric(metric_id: int, value: float, day: str | None = None, note: str = "") -> dict:
+    """Record a measurement (default today; a second value on the same day replaces the first). Returns whether the
+    number is on course for the goal's target date."""
+    async with owner_session() as (session, user):
+        metric = await session.scalar(select(GoalMetric).join(Goal).where(GoalMetric.id == metric_id, Goal.user_id == user.id))
+        if metric is None:
+            raise ToolError(f"No metric with id {metric_id}.")
+        d = parse_day(day, user)
+        entry = await session.scalar(select(MetricEntry).where(MetricEntry.metric_id == metric.id, MetricEntry.day == d))
+        if entry is None:
+            session.add(MetricEntry(metric_id=metric.id, day=d, value=value, note=note))
+        else:
+            entry.value, entry.note = value, note
+        await session.flush()
+        return await metric_view(session, await get_goal(session, user, metric.goal_id), metric, today_for(user))
+
+
 # ---------------------------------------------------------------- dashboard in chat
 
 @mcp.tool()
@@ -1187,6 +1468,19 @@ def new_goal(goal: str) -> str:
     return (f"I want to add a new goal: {goal}. Take me through the full intake: agree the exact goal with me, then the "
             "roadmap, then the timeline and what I'll do every day (a weekly routine). Confirm each step with me "
             "before saving it.")
+
+
+@mcp.prompt(title="Learn today's topics")
+def learn_today() -> str:
+    return ("Get my study context for today. Show today's topics, then switch to Learn mode: I'll ask you about them "
+            "and you teach me, and tell me which subtopics we haven't covered yet.")
+
+
+@mcp.prompt(title="Interview me")
+def interview_me(topic: str = "") -> str:
+    target = f"on {topic}" if topic else "on today's topics"
+    return (f"Get my study context, then interview me {target} in Interview mode, one question at a time, and mark me "
+            "strictly. Save the result and tell me my % learned.")
 
 
 @mcp.prompt(title="What's new for me")

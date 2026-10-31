@@ -9,6 +9,7 @@ import GoalDetail from './pages/GoalDetail'
 import Goals from './pages/Goals'
 import Login from './pages/Login'
 import SettingsPage from './pages/Settings'
+import Study, { TopicDetail } from './pages/Study'
 import Trends from './pages/Trends'
 import Weekly from './pages/Weekly'
 
@@ -36,6 +37,8 @@ export default function App() {
     <Routes>
       <Route element={<Layout onLogout={logout} />}>
         <Route index element={<Dashboard />} />
+        <Route path="study" element={<Study />} />
+        <Route path="study/:id" element={<TopicDetail />} />
         <Route path="log" element={<DailyLog />} />
         <Route path="log/:day" element={<DailyLog />} />
         <Route path="goals" element={<Goals />} />

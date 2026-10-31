@@ -9,6 +9,7 @@ from app.core.db import get_session
 from app.models import User, WeeklyReview
 from app.schemas import WeeklyOut
 from app.services import weekly
+from app.services.push import local_now
 
 router = APIRouter(prefix="/reviews/weekly", tags=["reviews"])
 
@@ -24,9 +25,9 @@ async def list_reviews(user: User = Depends(current_user), session: AsyncSession
 @router.post("", response_model=WeeklyOut)
 async def generate(week: date | None = None, user: User = Depends(current_user),
                    session: AsyncSession = Depends(get_session)):
-    start = weekly.week_start_of(week or date.today())
-    if start > date.today():
+    start = weekly.week_start_of(week or local_now(user.timezone).date())
+    if start > local_now(user.timezone).date():
         raise HTTPException(400, "That week hasn't started yet")
-    review = await weekly.generate(session, user, start)
+    review = await weekly.generate(session, user, start, local_now(user.timezone).date())
     await session.commit()
     return review

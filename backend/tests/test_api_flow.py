@@ -26,7 +26,7 @@ ROADMAP = {
 
 async def test_full_flow(client, fake_llm):
     h = await register(client, "a@example.com")
-    today = date.today()
+    today = datetime.now(timezone.utc).date()  # new users are on UTC
 
     # --- intake interview ---
     fake_llm.queue("IntakeTurn", {"action": "ask", "message": "Great goal!",
@@ -160,7 +160,7 @@ async def test_rule_fallback_without_llm(client):
                               json={"phase_id": phase_id, "title": "10 customer interviews", "est_hours": 10})).json()
     await client.post(f"/goals/{goal_id}/roadmap/reschedule", headers=h)
 
-    day = date.today()
+    day = datetime.now(timezone.utc).date()
     await client.put(f"/entries/{day}", headers=h, json={"schedule": [
         {"start": "18:00", "end": "20:00", "activity": "Customer calls", "kind": "network",
          "goal_id": goal_id, "roadmap_item_id": item["id"]}]})

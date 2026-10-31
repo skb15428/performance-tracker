@@ -11,6 +11,13 @@ It flags when you fall behind and proposes a replan. It also surfaces new develo
 - **Frontend**: a read-only dashboard (React, Vite, TypeScript, Tailwind, TanStack Query, Recharts). It installs as a PWA with push reminders that open Claude. Coaching itself happens in Claude through the MCP server.
 - **LLM**: Google Gemini free tier, behind a provider interface (`backend/app/services/llm/`). Every feature falls back to rules when no key is configured or the quota runs out.
 
+## How progress is proven
+
+Each roadmap item has a proof type:
+- **Interview (knowledge):** the Study page lists today's topics and subtopics. You learn by questioning Claude, then Claude interviews you, by voice or text. Passing needs 85% overall and at least 4/5 on every core subtopic. Failing brings back only the weak subtopics, and passed topics get re-tests after 3, 7 and 21 days. An item is done only when all its topics pass.
+- **Log (physical or habit):** you tell Claude what you did, and it judges that against your routine and measurable targets such as body weight.
+- **Deliverable (projects and tasks):** done when the outcome is reported.
+
 ## How scoring works
 
 For each goal, on a 0–10 scale:
@@ -20,7 +27,7 @@ For each goal, on a 0–10 scale:
 
 The daily score (0–100) is built from the per-goal scores:
 1. Take the priority-weighted average of goal scores.
-2. Blend in 20% plan adherence (how much of yesterday's plan you did).
+2. Blend in 30% for how well the time was used, judged by Claude, so valuable off-plan work isn't penalised. Rules-only days use 20% plan adherence instead.
 3. Subtract up to 15 points for wasted time.
 4. Add up to 5 points for your logging streak.
 
@@ -123,7 +130,8 @@ The same app serves the web API and a **remote MCP endpoint** at `/mcp`, protect
    - A job that POSTs `/jobs/send-reminders` every 15 minutes, with header `X-Jobs-Secret: <JOBS_SECRET>`, sends the reminders:
      - the nightly reminder opens Claude with "Log my day" and is skipped on rest days, days off and days you've already logged;
      - the 7 am reminder shows today's plan, built from your routine if needed.
-7. **Feed refresh (optional):** a cron-job.org job that POSTs `/jobs/ingest-feeds` once a day, with the same `X-Jobs-Secret` header. Claude also refreshes the feeds itself when they're more than a day old. Weekly reviews and "what's new" are done with Claude, so they aren't scheduled. `.github/workflows/cron.yml` can run any job by hand from the Actions tab (needs repo secrets `API_URL` and `JOBS_SECRET`).
+7. **Email reminder (optional):** create a free [Resend](https://resend.com) account and set `RESEND_API_KEY` on Render. Its default sender only delivers to the Resend account's own email, so use the address you want reminders on. The cron-job.org reminders job sends these emails.
+8. **Feed refresh (optional):** a cron-job.org job that POSTs `/jobs/ingest-feeds` once a day, with the same `X-Jobs-Secret` header. Claude also refreshes the feeds itself when they're more than a day old. Weekly reviews and "what's new" are done with Claude, so they aren't scheduled. `.github/workflows/cron.yml` can run any job by hand from the Actions tab (needs repo secrets `API_URL` and `JOBS_SECRET`).
 
 Use one place for your data: once the connector works, remove the local `goalcoach` entry from Claude Desktop's config and use the connector everywhere. The local SQLite file and Neon are separate databases.
 

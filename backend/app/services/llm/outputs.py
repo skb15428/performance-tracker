@@ -16,6 +16,8 @@ class ItemDraft(BaseModel):
     description: str = ""
     est_hours: float = Field(default=4, ge=0.25, le=500)
     resources: list[Resource] = []
+    proof: Literal["interview", "log", "deliverable"] | None = Field(
+        default=None, description="interview = knowledge, log = physical/habit, deliverable = projects and tasks")
 
 
 class PhaseDraft(BaseModel):
@@ -97,6 +99,11 @@ class DayAnalysis(BaseModel):
     went_badly: list[str] = []
     tomorrow: list[PlanDraft] = []
     tip: str = ""
+    time_value: float | None = Field(
+        default=None, ge=0, le=10,
+        description="How well the day's available time was used and whether the work, planned or not, was worth it "
+                    "for the goals. 10 = excellent use, 5 = average, 0 = wasted. Valuable off-plan work scores high.")
+    time_value_reason: str = ""
 
 
 class ReplanDraft(BaseModel):

@@ -5,7 +5,7 @@ import TaskCard from '../components/TaskCard'
 import { Button, Card, EmptyState, Input, Loading, PageHeader, ScoreRing, cx, scoreTone } from '../components/ui'
 import { api } from '../lib/api'
 import { addDays, fmtMinutes, prettyDate, todayIso } from '../lib/dates'
-import type { Entry, PlanItem } from '../lib/types'
+import type { Entry, PlanItem, StudyToday } from '../lib/types'
 
 // ---------------- Plan for the day ----------------
 
@@ -100,6 +100,30 @@ function ReviewResult({ entry }: { entry: Entry }) {
   )
 }
 
+function DayInterviews({ day }: { day: string }) {
+  const { data } = useQuery({ queryKey: ['study', day], queryFn: () => api<StudyToday>(`/study/today?day=${day}`) })
+  if (!data?.interviews.length) return null
+  return (
+    <Card eyebrow="Interviews" title="What you proved this day">
+      <ul className="space-y-3">
+        {data.interviews.map((s) => (
+          <li key={s.id}>
+            <Link to={`/study/${s.topic_id}`} className="flex items-center justify-between gap-3">
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{s.topic}</span>
+                <span className="block text-xs text-muted">
+                  {s.kind === 'retest' ? 'Re-test' : 'Interview'} · {s.passed ? 'Passed' : `Weak: ${s.weak_concepts.join(', ')}`}
+                </span>
+              </span>
+              <span className={cx('font-display text-2xl tabular-nums', scoreTone(s.overall_pct))}>{Math.round(s.overall_pct)}%</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
 // ---------------- Page ----------------
 
 export default function DailyLog() {
@@ -130,6 +154,7 @@ export default function DailyLog() {
       {entry && (
         <div className="space-y-4">
           <DayPlan day={day} />
+          <DayInterviews day={day} />
           {entry.review ? (
             <ReviewResult entry={entry} />
           ) : (

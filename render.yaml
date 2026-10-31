@@ -35,3 +35,5 @@ services:
         sync: false
       - key: VAPID_SUBJECT
         sync: false # mailto:you@example.com
+      - key: RESEND_API_KEY
+        sync: false # free key from resend.com, for the nightly email reminder

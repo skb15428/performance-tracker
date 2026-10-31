@@ -19,6 +19,7 @@ class SettingsOut(BaseModel):
     reminder_time: str
     morning_push: bool
     daily_available_hours: float
+    email_reminders: bool = True
     has_own_key: bool
     server_llm_available: bool
     vapid_public_key: str
@@ -29,6 +30,7 @@ class SettingsIn(BaseModel):
     timezone: str | None = None
     reminder_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     morning_push: bool | None = None
+    email_reminders: bool | None = None
     daily_available_hours: float | None = Field(default=None, gt=0, le=16)
     gemini_api_key: str | None = None  # "" clears it
 

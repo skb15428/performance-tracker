@@ -8,11 +8,12 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pywebpush import WebPushException, webpush
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models import DailyEntry, DailyReview, PlanItem, PushSubscription, User
+from app.services.email import send_email
 
 log = logging.getLogger(__name__)
 MORNING_TIME = "07:00"
@@ -105,7 +106,8 @@ async def is_rest_day(session: AsyncSession, user: User, today: date) -> bool:
 async def run_reminders(session: AsyncSession, now: datetime | None = None) -> int:
     sent = 0
     users = list(await session.scalars(
-        select(User).where(User.id.in_(select(PushSubscription.user_id)), User.is_active.is_(True))
+        select(User).where(User.is_active.is_(True),
+                           or_(User.id.in_(select(PushSubscription.user_id)), User.email_reminders.is_(True)))
     ))
     for user in users:
         local = local_now(user.timezone, now)
@@ -115,11 +117,16 @@ async def run_reminders(session: AsyncSession, now: datetime | None = None) -> i
                 and user.last_reminded_on != today and not await has_review(session, user.id, today)):
             user.last_reminded_on = today
             if not await is_rest_day(session, user, today):
+                link = claude_link("Log my day")
                 sent += await send_to_user(session, user.id, {
                     "title": "How did today go?",
                     "body": "Tap to tell Claude about your day and get tomorrow's plan.",
-                    "url": claude_link("Log my day"),
+                    "url": link,
                 })
+                if user.email_reminders:
+                    sent += await send_email(user.email, "How did today go?", (
+                        f'<p>Take 3 minutes to tell Claude about your day and get tomorrow\'s plan.</p>'
+                        f'<p><a href="{link}">Log my day in Claude</a></p>'))
         # Morning: today's plan, built from the routine if last night's review didn't make one.
         if user.morning_push and in_window(local, MORNING_TIME):
             plan = await todays_plan(session, user, today, create=True)

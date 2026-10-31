@@ -136,7 +136,7 @@ async def approve_roadmap(goal_id: int, body: ApproveIn, user: User = Depends(cu
     goal = await get_goal_or_404(session, goal_id, user)
     if not body.roadmap.phases:
         raise HTTPException(400, "Roadmap needs at least one phase")
-    feas = await roadmap.approve_draft(session, user, goal, body.roadmap, body.target_date, date.today())
+    feas = await roadmap.approve_draft(session, user, goal, body.roadmap, body.target_date, local_now(user.timezone).date())
     await session.commit()
     goal = await get_goal_or_404(session, goal.id, user)
     return await roadmap_out(session, user, goal, feas)
@@ -146,7 +146,7 @@ async def approve_roadmap(goal_id: int, body: ApproveIn, user: User = Depends(cu
 async def reschedule_roadmap(goal_id: int, user: User = Depends(current_user),
                              session: AsyncSession = Depends(get_session)):
     goal = await get_goal_or_404(session, goal_id, user)
-    feas = await roadmap.reschedule(session, user, goal, date.today())
+    feas = await roadmap.reschedule(session, user, goal, local_now(user.timezone).date())
     await session.commit()
     return await roadmap_out(session, user, goal, feas)
 
@@ -199,7 +199,7 @@ async def update_item(item_id: int, body: ItemPatch, user: User = Depends(curren
         goal = await session.get(Goal, (await session.get(RoadmapPhase, item.phase_id)).goal_id)
         goal.baseline = {}  # dates set by hand: measure progress against them instead of the scheduler's plan
     if data.get("status") == "done" and item.completed_at is None:
-        item.completed_at = date.today()
+        item.completed_at = local_now(user.timezone).date()
     elif "status" in data and data["status"] != "done":
         item.completed_at = None
     await session.commit()
