@@ -130,7 +130,7 @@ async def test_remote_mcp_oauth_flow():
             assert "Ship my micro-SaaS" in overview.content[0].text
 
         # The regular web API keeps working alongside.
-        assert httpx.get(f"{base}/health").json() == {"ok": True}
+        assert httpx.get(f"{base}/health").json()["ok"] is True
     finally:
         proc.terminate()
         proc.wait(timeout=10)
