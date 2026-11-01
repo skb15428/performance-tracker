@@ -398,11 +398,13 @@ export type StudyTopic = {
   last_pct: number | null
   concept_scores: Record<string, number>
   weak_concepts: string[]
+  understood: string[]
+  resume_note: string
   passed_on: string | null
   next_review_on: string | null
 }
 
-export type NoteSummary = { id: number; topic_id: number | null; title: string; snippet: string; updated_at: string }
+export type NoteSummary = { id: number; topic_id: number | null; big_picture: boolean; title: string; snippet: string; updated_at: string }
 
 export type Note = { id: number; topic_id: number | null; title: string; content: string; updated_at: string }
 
@@ -422,7 +424,7 @@ export type InterviewResult = {
   questions: { question: string; concept: string; is_follow_up?: boolean; answer_summary?: string; score: number; gap?: string }[]
 }
 
-export type StudyToday = { date: string; available_minutes: number; rest_day: boolean; topics: TodayTopic[]; interviews: InterviewResult[] }
+export type StudyToday = { date: string; available_minutes: number; rest_day: boolean; background_check_due: { id: number; title: string } | null; topics: TodayTopic[]; interviews: InterviewResult[] }
 
 export type UpcomingDay = { date: string; minutes: number; topics: TodayTopic[] }
 
@@ -437,6 +439,7 @@ export type UpcomingStep = {
   est_hours: number
   topics: StudyTopic[]
   needs_topics: boolean
+  big_picture_note_id: number | null
 }
 
 export type StudyUpcoming = { days: UpcomingDay[]; steps: UpcomingStep[] }

@@ -1,9 +1,9 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useDeferredValue, useState } from 'react'
+import { isValidElement, useDeferredValue, useEffect, useId, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import { Link, useParams } from 'react-router-dom'
 import remarkGfm from 'remark-gfm'
-import { Button, Card, EmptyState, ErrorText, Input, Loading, PageHeader } from '../components/ui'
+import { Badge, Button, Card, EmptyState, ErrorText, Input, Loading, PageHeader } from '../components/ui'
 import { api } from '../lib/api'
 import { prettyDate } from '../lib/dates'
 import type { Note, NoteSummary } from '../lib/types'
@@ -15,6 +15,39 @@ function download(note: Note) {
   link.download = `${note.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'notes'}.md`
   link.click()
   URL.revokeObjectURL(url)
+}
+
+function Diagram({ source }: { source: string }) {
+  const id = `diagram-${useId().replace(/[^a-zA-Z0-9]/g, '')}`
+  const [svg, setSvg] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let current = true
+    import('mermaid')
+      .then(async ({ default: mermaid }) => {
+        const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
+        await mermaid.parse(source)
+        const drawn = await mermaid.render(id, source)
+        if (current) setSvg(drawn.svg)
+      })
+      .catch(() => current && setFailed(true))
+    return () => {
+      current = false
+    }
+  }, [id, source])
+
+  if (failed) return <pre><code>{source}</code></pre>
+  if (!svg) return <p className="text-sm text-muted">Drawing diagram…</p>
+  // securityLevel 'strict' has Mermaid clean the SVG before it reaches here
+  return <div className="note-diagram" role="img" aria-label="Diagram" dangerouslySetInnerHTML={{ __html: svg }} />
+}
+
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const code = isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : null
+  if (code?.className === 'language-mermaid') return <Diagram source={String(code.children).trim()} />
+  return <pre>{children}</pre>
 }
 
 export function NoteDetail() {
@@ -47,7 +80,7 @@ export function NoteDetail() {
         <div className="note-body">
           <Markdown
             remarkPlugins={[remarkGfm]}
-            components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}
+            components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />, pre: ({ children }) => <CodeBlock>{children}</CodeBlock> }}
           >
             {note.content}
           </Markdown>
@@ -82,7 +115,8 @@ export default function Notes() {
         {data?.map((n) => (
           <li key={n.id}>
             <Link to={`/notes/${n.id}`} className="block rounded-3xl border border-line bg-surface p-4 transition hover:bg-surface-2">
-              <p className="font-medium">{n.title}</p>
+              <p className="font-medium">{n.title.replace(/^Big picture: /, '')}</p>
+              {n.big_picture && <Badge tone="brand" className="mt-1">Big picture</Badge>}
               <p className="mt-1 line-clamp-2 text-sm text-muted">{n.snippet}</p>
             </Link>
           </li>

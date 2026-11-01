@@ -137,6 +137,7 @@ class RoadmapItem(Base):
     search_terms: Mapped[list] = mapped_column(JSON, default=list)  # phrases/synonyms for finding news on it
     # How progress is proven: interview (knowledge), log (physical/habit), deliverable (projects, tasks)
     proof: Mapped[str] = mapped_column(String(12), default="deliverable")
+    background: Mapped[dict | None] = mapped_column(JSON)  # the check before this step: {checked_on, known, gaps}
     proof_links: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")  # [{title, url}] of finished work
 
     phase: Mapped[RoadmapPhase] = relationship(back_populates="items")
@@ -340,6 +341,8 @@ class StudyTopic(Base):
     last_pct: Mapped[float | None] = mapped_column(Float)
     concept_scores: Mapped[dict] = mapped_column(JSON, default=dict)  # {concept: average 0-5} from the latest attempt
     weak_concepts: Mapped[list] = mapped_column(JSON, default=list)
+    understood: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")  # subtopics the user has ticked
+    resume_note: Mapped[str] = mapped_column(Text, default="", server_default="")  # where the last session stopped
     planned_for: Mapped[date | None] = mapped_column(Date)  # chosen for this day; unfinished topics roll forward
     passed_on: Mapped[date | None] = mapped_column(Date)
     review_stage: Mapped[int] = mapped_column(Integer, default=0)  # re-tests already passed (0-3)
@@ -348,13 +351,15 @@ class StudyTopic(Base):
 
 
 class TopicNote(Base):
-    """Claude's written notes on one study topic, in Markdown. They outlive the topic if it's later replaced."""
+    """Claude's Markdown notes on one study topic, or the big picture of a roadmap step. They outlive what they're
+    about if it's later replaced."""
 
     __tablename__ = "topic_notes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
     topic_id: Mapped[int | None] = mapped_column(ForeignKey("study_topics.id", ondelete="SET NULL"), unique=True)
+    roadmap_item_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_items.id", ondelete="SET NULL"), unique=True)
     title: Mapped[str] = mapped_column(String(300))
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

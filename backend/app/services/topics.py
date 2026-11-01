@@ -35,6 +35,8 @@ def topic_minutes(topic: StudyTopic) -> int:
     weak = len(topic.weak_concepts or [])
     if topic.status == "learning" and weak:
         return max(round(topic.est_minutes * weak / total), 15)
+    if topic.status == "new" and topic.understood:
+        return max(round(topic.est_minutes * (total - len(topic.understood)) / total), 15)
     return topic.est_minutes
 
 
@@ -74,6 +76,24 @@ async def goal_topics(session: AsyncSession, goal: Goal) -> list[StudyTopic]:
     position = {i.id: n for n, i in enumerate(roadmap.ordered_items(goal))}
     rows = list(await session.scalars(select(StudyTopic).where(StudyTopic.goal_id == goal.id).order_by(StudyTopic.order)))
     return sorted(rows, key=lambda t: (position.get(t.roadmap_item_id, -1), t.order, t.id))
+
+
+def background_due(goal: Goal) -> RoadmapItem | None:
+    """The next roadmap step, if it's a study step nobody has checked the user's background for."""
+    for item in roadmap.ordered_items(goal):
+        if item.status in roadmap.OPEN_STATUSES:
+            return item if item.proof == "interview" and item.background is None else None
+    return None
+
+
+async def topic_path(session: AsyncSession, goal: Goal, topic: StudyTopic) -> dict:
+    """Where a topic sits in its roadmap step: what came before it, and what it leads to."""
+    rows = [t for t in await goal_topics(session, goal) if t.roadmap_item_id == topic.roadmap_item_id]
+    at = next(n for n, t in enumerate(rows) if t.id == topic.id)
+    return {"position": at + 1, "of": len(rows),
+            "before": [{"title": t.title, "status": t.status, "subtopics": [c["name"] for c in t.concepts]}
+                       for t in rows[:at]],
+            "after": [t.title for t in rows[at + 1:]]}
 
 
 def reachable(goal: Goal, rows: list[StudyTopic]) -> list[StudyTopic]:

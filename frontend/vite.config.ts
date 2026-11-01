@@ -13,6 +13,8 @@ export default defineConfig({
       filename: 'sw.ts',
       registerType: 'autoUpdate',
       injectRegister: false,
+      // Only the app itself is kept offline: the diagram library loads when a note needs it
+      injectManifest: { globPatterns: ['**/*.{html,css,svg}', 'assets/index-*.js'] },
       devOptions: { enabled: true, type: 'module' },
       manifest: {
         name: 'GoalCoach',

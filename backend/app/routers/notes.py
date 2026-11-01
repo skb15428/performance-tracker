@@ -14,7 +14,8 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 
 @router.get("")
 async def list_notes(q: str = "", user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
-    return [{"id": n.id, "topic_id": n.topic_id, "title": n.title, "snippet": notes.snippet(n, q),
+    return [{"id": n.id, "topic_id": n.topic_id, "big_picture": n.roadmap_item_id is not None, "title": n.title,
+             "snippet": notes.snippet(n, q),
              "updated_at": n.updated_at} for n in await notes.search(session, user, q)]
 
 

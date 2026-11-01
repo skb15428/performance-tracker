@@ -7,6 +7,8 @@ import { api } from '../lib/api'
 import Notes, { NoteDetail } from './Notes'
 
 vi.mock('../lib/api', () => ({ api: vi.fn() }))
+const mermaid = vi.hoisted(() => ({ initialize: vi.fn(), parse: vi.fn(), render: vi.fn() }))
+vi.mock('mermaid', () => ({ default: mermaid }))
 const mocked = vi.mocked(api)
 
 function show(path: string) {
@@ -47,6 +49,26 @@ describe('Notes', () => {
     expect(await screen.findByText('No notes yet')).toBeTruthy()
     await userEvent.type(screen.getByRole('searchbox'), 'xyz')
     expect(await screen.findByText('Nothing found')).toBeTruthy()
+  })
+
+  const note = (content: string) => ({ id: 1, topic_id: 2, title: 'Attention', updated_at: '2026-11-01T10:00:00Z', content })
+
+  it('draws Mermaid diagrams', async () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
+    mermaid.parse.mockResolvedValue(true)
+    mermaid.render.mockResolvedValue({ svg: '<svg data-testid="drawn"></svg>' })
+    mocked.mockResolvedValue(note('```mermaid\ngraph TD; A-->B\n```') as never)
+    show('/notes/1')
+    expect(await screen.findByTestId('drawn')).toBeTruthy()
+    expect(mermaid.render.mock.calls[0][1]).toBe('graph TD; A-->B')
+  })
+
+  it('shows the code when a diagram is broken', async () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
+    mermaid.parse.mockRejectedValue(new Error('bad'))
+    mocked.mockResolvedValue(note('```mermaid\nnot a diagram\n```') as never)
+    show('/notes/1')
+    expect((await screen.findByText('not a diagram')).tagName).toBe('CODE')
   })
 
   it('shows Markdown with headings, code and tables, and no raw HTML', async () => {

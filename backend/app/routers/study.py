@@ -21,6 +21,7 @@ WEAKEST_SHOWN = 8
 def topic_out(t: StudyTopic) -> dict:
     return {"id": t.id, "goal_id": t.goal_id, "roadmap_item_id": t.roadmap_item_id, "title": t.title,
             "concepts": t.concepts, "est_minutes": t.est_minutes, "status": t.status, "source": t.source,
+            "understood": t.understood, "resume_note": t.resume_note,
             "attempts": t.attempts, "best_pct": t.best_pct, "last_pct": t.last_pct,
             "concept_scores": t.concept_scores, "weak_concepts": t.weak_concepts,
             "passed_on": t.passed_on, "next_review_on": t.next_review_on}
@@ -43,6 +44,7 @@ async def today_topics(day: date | None = None, user: User = Depends(current_use
         .where(Goal.user_id == user.id, InterviewSession.day == d).order_by(InterviewSession.id)))
     done_ids = {s.topic_id for s, _ in interviews}
     rows = [{**topic_out(p.topic), "goal": g.title, "mode": p.mode, "minutes": p.minutes} for g, p in picked]
+    due = next((i for i in map(study.background_due, goals) if i is not None), None)
     for s, _ in interviews:  # a topic passed today leaves the queue but still belongs on today's page
         if s.topic_id not in {r["id"] for r in rows}:
             t = await session.get(StudyTopic, s.topic_id)
@@ -51,6 +53,7 @@ async def today_topics(day: date | None = None, user: User = Depends(current_use
     return {
         "date": d, "available_minutes": sum([await roadmap.goal_target_minutes(session, user, g, d) for g in goals]),
         "rest_day": await study.is_rest_day(session, user, goals, d),
+        "background_check_due": {"id": due.id, "title": due.title} if due else None,
         "topics": rows, "interviews": [session_out(s, title) for s, title in interviews],
         "tested_today": sorted(done_ids),
     }
@@ -70,10 +73,12 @@ async def upcoming(user: User = Depends(current_user), session: AsyncSession = D
         for i in roadmap.ordered_items(g):
             if i.status in roadmap.OPEN_STATUSES:
                 rows = by_item.get(i.id, [])
+                overview = await notes.for_item(session, i.id)
                 steps.append({"id": i.id, "goal": g.title, "title": i.title, "proof": i.proof, "status": i.status,
                               "planned_start": i.planned_start, "planned_due": i.planned_due,
                               "est_hours": i.est_hours, "topics": [topic_out(t) for t in rows],
-                              "needs_topics": i.proof == "interview" and not rows})
+                              "needs_topics": i.proof == "interview" and not rows,
+                              "big_picture_note_id": overview.id if overview else None})
     return {
         "days": [{"date": u.day, "minutes": u.minutes,
                   "topics": [{**topic_out(p.topic), "goal": g.title, "mode": p.mode, "minutes": p.minutes}

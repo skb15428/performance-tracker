@@ -221,3 +221,15 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   padding: 0.4em 0.7em;
   text-align: left;
 }
+.note-diagram {
+  overflow-x: auto;
+  border-radius: 1rem;
+  background: var(--surface-2);
+  padding: 1rem;
+}
+.note-diagram svg {
+  display: block;
+  margin-inline: auto;
+  max-width: 100%;
+  height: auto;
+}

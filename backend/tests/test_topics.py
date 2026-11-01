@@ -7,7 +7,7 @@ DAY = date(2026, 11, 2)
 
 
 def t(id, status="new", est=30, concepts=4, weak=0, planned_for=None, next_review_on=None):
-    return SimpleNamespace(id=id, status=status, est_minutes=est, concepts=[{}] * concepts,
+    return SimpleNamespace(understood=[], id=id, status=status, est_minutes=est, concepts=[{}] * concepts,
                            weak_concepts=["x"] * weak, planned_for=planned_for, next_review_on=next_review_on)
 
 

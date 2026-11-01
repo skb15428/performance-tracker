@@ -47,7 +47,19 @@ from app.models import (
     WeeklyReview,
 )
 from app.routers.goals import goal_out
-from app.services import analysis, commitment, events, jobsearch, mastery, metrics, roadmap, timeline, timelogs, weekly
+from app.services import (
+    analysis,
+    commitment,
+    events,
+    jobsearch,
+    mastery,
+    metrics,
+    roadmap,
+    teaching,
+    timeline,
+    timelogs,
+    weekly,
+)
 from app.services import notes as topic_notes
 from app.services import topics as study
 from app.services.llm.outputs import DayAnalysis, PlanDetails, ReplanDraft, Resource, RoadmapDraft
@@ -96,8 +108,10 @@ it. deliverable = projects, applications and tasks, done when the outcome is rep
 proof in set_roadmap. For physical goals, turn "be fit" into numbers during intake and add them with add_metric, and
 record new measurements with log_metric when the user mentions them. Give general fitness guidance, not medical advice.
 
-STUDY: get_study_context shows today's topics. If an item is listed in items_needing_topics, split it first with
-set_item_topics: all subtopics needed for depth and breadth, with honest minutes. You decide how many topics fit the
+STUDY: get_study_context shows today's topics. If background_check_due is set, do that first (see the teaching
+protocol). If an item is listed in items_needing_topics, split it with set_item_topics: all subtopics needed for depth
+and breadth, ordered from the basics up so nothing assumes what hasn't come yet, with honest minutes that never shrink
+to fit a day. A topic can take several days. You decide how many topics fit the
 available time at the user's pace; change the selection with plan_topics. If the user studies something else, call
 add_study_topic. It counts fully. The user may name specific subtopics; focus on those.
 get_study_context also returns coming_up, the next working days topic by topic, so you can answer what's ahead.
@@ -111,18 +125,22 @@ SCORECARD AND PROOF: turn success criteria into numbers with add_metric. source=
 proof_links count themselves; log anything else with log_metric. When a deliverable is finished, ask for a link to it
 (repo, blog, demo) and save it with update_roadmap_item link_url, so the proof page stays useful.
 JOB SEARCH: record every application and stage change with save_application, and use get_applications to see the pipeline.
-LEARN MODE: the user is the interviewer and asks you anything on the topic. Answer accurately and in depth, with code
-when useful. Point out subtopics they haven't asked about yet so breadth isn't missed.
-INTERVIEW MODE: you are a strict senior interviewer and the user answers. Ask one question at a time, wait for the
+LEARN MODE: call get_teaching_protocol first and follow it exactly, from the roadmap through the assessment and notes.
+It's the user's own method: one concept at a time, stopping until they type next.
+INTERVIEW MODE: if the user skips straight to an interview, use the protocol's Phase 3. You are a strict senior
+interviewer and the user answers. Ask one question at a time, wait for the
 answer, and follow up on it. Give no hints or answers until the end. Cover every core subtopic (weak_concepts only when
 mode is carryover; 3-4 short questions when mode is retest, with kind="retest"). Mark each answer 0-5: 0 wrong, 3
 correct but shallow, 4 solid with reasons, 5 senior level with trade-offs. Never soften marks to be kind. Then call
 save_interview, tell them the % learned and verdict exactly as returned, and explain each gap. The server decides pass
 or fail; don't overrule it.
-NOTES: after every save_interview, pass or fail, write the topic's notes and call save_topic_notes, one note per topic.
+NOTES: after save_interview, write the topic's notes and call save_topic_notes, one note per topic. After a pass in the
+teaching protocol, wait for next as it says; otherwise write them straight away.
 The user rereads these in the app's Notes tab, so write a complete study guide in Markdown: what it is and why it matters,
 every subtopic explained in depth, a simple analogy, worked examples, code in fenced blocks where code helps, trade-offs,
-common mistakes, likely interview questions with strong answers, and a final section on the gaps from this interview.
+common mistakes, then MCQs with answers and explanations, and finally questions with strong answers. Notes are only
+about the topic: never mention the user, their answers, scores, verdict, weak areas or how they did. Where they
+struggled, just explain that part more deeply, and remove any such mention from an older note when improving it.
 The app shows the topic's title, so start at the first section.
 If the result shows notes_saved, call get_topic_notes first and improve that note rather than losing it. Use what was
 taught in this chat if you have it; otherwise work from the topic, its subtopics and the interview. If the user is in
@@ -1298,6 +1316,7 @@ def concept_dicts(concepts: list[ConceptIn]) -> list[dict]:
 
 def topic_view(t: StudyTopic, mode: str | None = None, minutes: int | None = None) -> dict:
     view = {"topic_id": t.id, "title": t.title, "status": t.status, "source": t.source, "concepts": t.concepts,
+            "understood": t.understood, "resume_note": t.resume_note,
             "weak_concepts": t.weak_concepts, "concept_scores": t.concept_scores, "last_pct": t.last_pct,
             "best_pct": t.best_pct, "attempts": t.attempts, "next_review_on": iso(t.next_review_on),
             "roadmap_item_id": t.roadmap_item_id}
@@ -1316,15 +1335,16 @@ async def get_topic(session: AsyncSession, user: User, topic_id: int) -> StudyTo
 @mcp.tool()
 async def set_item_topics(item_id: int, topics: list[TopicIn]) -> dict:
     """Split a knowledge roadmap item into study topics, each with all its subtopics and a time estimate. Replaces
-    topics not yet attempted; topics with interview history are kept. Marks the item as interview-proven."""
+    topics not yet started; topics with saved progress or interview history are kept. Marks the item as interview-proven."""
     async with owner_session() as (session, user):
         item = await get_item(session, user, item_id)
         phase = await session.get(RoadmapPhase, item.phase_id)
         existing = await study.item_topics(session, item.id)
+        started = [t for t in existing if t.attempts or t.understood]
         for t in existing:
-            if t.attempts == 0:
+            if t not in started:
                 await session.delete(t)
-        kept = {t.title.strip().lower() for t in existing if t.attempts}
+        kept = {t.title.strip().lower() for t in started}
         order = len(kept)
         for t in topics:
             if t.title.strip().lower() not in kept:
@@ -1385,6 +1405,8 @@ async def get_study_context(day: str | None = None) -> dict:
             "date": d.isoformat(),
             "available_minutes": sum([await roadmap.goal_target_minutes(session, user, g, d) for g in goals]),
             "rest_day": await study.is_rest_day(session, user, goals, d),
+            "background_check_due": next(({"item_id": i.id, "title": i.title} for i in map(study.background_due, goals)
+                                          if i is not None), None),
             "topics": [{"goal_id": g.id, "goal": g.title, **topic_view(p.topic, p.mode, p.minutes)} for g, p in picked],
             "coming_up": [{"date": u.day.isoformat(), "weekday": u.day.strftime("%A"), "minutes": u.minutes,
                            "topics": [{"topic_id": p.topic.id, "title": p.topic.title, "mode": p.mode,
@@ -1408,11 +1430,13 @@ class InterviewAnswer(BaseModel):
 
 @mcp.tool()
 async def save_interview(topic_id: int, questions: list[InterviewAnswer], minutes: int = 0,
-                         kind: Literal["first", "retest"] = "first", day: str | None = None) -> dict:
+                         kind: Literal["first", "retest"] = "first", day: str | None = None,
+                         skipped_learning: bool = False) -> dict:
     """Save a finished interview, marked honestly. The server decides pass or fail: at least 85% overall and every
-    core subtopic at 4/5 or better, with follow-ups in a first interview. minutes = time spent learning + interviewing
-    on this topic; it's credited to the roadmap item, so don't credit it again in save_day_review. Returns the
-    verdict, % learned, weak subtopics and the next review date."""
+    core subtopic at 4/5 or better, with follow-ups in a first interview. minutes = time on this topic not already
+    saved with save_learn_progress; it's credited to the roadmap item, so don't credit it again in save_day_review.
+    A first interview needs every subtopic ticked with save_learn_progress, unless the user asked to skip learning
+    (skipped_learning=True). Returns the verdict, % learned, weak subtopics and the next review date."""
     async with owner_session() as (session, user):
         d = parse_day(day, user)
         topic = await get_topic(session, user, topic_id)
@@ -1424,6 +1448,10 @@ async def save_interview(topic_id: int, questions: list[InterviewAnswer], minute
             return {"topic": topic.title, "percent_learned": previous.overall_pct, "passed": previous.passed,
                     "weak_subtopics": previous.weak_concepts, "next_review_on": iso(topic.next_review_on),
                     "continues_on": iso(topic.planned_for), "already_saved": True}
+        unticked = [c["name"] for c in topic.concepts if c["name"] not in topic.understood]
+        if kind == "first" and not topic.attempts and unticked and not skipped_learning:
+            raise ToolError(f"Not ready to test: the user hasn't confirmed these subtopics yet: {', '.join(unticked)}. "
+                            "Finish the checklist first, or pass skipped_learning=True if they asked to skip it.")
         result = mastery.evaluate(marks, topic.concepts, retest=kind == "retest")
         session.add(InterviewSession(topic_id=topic.id, day=d, kind=kind, minutes=minutes, questions=marks,
                                      overall_pct=result.overall_pct, passed=result.passed,
@@ -1447,6 +1475,77 @@ async def save_interview(topic_id: int, questions: list[InterviewAnswer], minute
             "next_review_on": iso(topic.next_review_on), "continues_on": iso(topic.planned_for),
             "roadmap_item_finished": finished,
         }
+
+
+@mcp.tool()
+async def save_background_check(item_id: int, known: list[str], gaps: list[str]) -> dict:
+    """Record what the user already knows and what's missing before a roadmap step. known and gaps are short phrases.
+    Also call it for a foundations step you add because of this check, so it isn't checked twice."""
+    async with owner_session() as (session, user):
+        item = await get_item(session, user, item_id)
+        item.background = {"checked_on": today_for(user).isoformat(), "known": known, "gaps": gaps}
+        return {"item_id": item.id, "background": item.background}
+
+
+@mcp.tool()
+async def get_topic_path(topic_id: int) -> dict:
+    """Everything to open a session: the goal, the roadmap step, the topics before and after this one, the subtopics
+    still to confirm, where the last session stopped, and whether the step has its big-picture note."""
+    async with owner_session() as (session, user):
+        topic = await get_topic(session, user, topic_id)
+        goal = await roadmap.load_goal(session, topic.goal_id, user.id)
+        item = await get_item(session, user, topic.roadmap_item_id) if topic.roadmap_item_id else None
+        return {"goal": goal.title, "goal_statement": goal.statement, "step": item.title if item else None,
+                "background": item.background if item else None, "topic": topic_view(topic),
+                "not_understood_yet": [c["name"] for c in topic.concepts if c["name"] not in topic.understood],
+                "big_picture_saved": bool(item and await topic_notes.for_item(session, item.id)),
+                **await study.topic_path(session, goal, topic)}
+
+
+@mcp.tool()
+async def save_learn_progress(topic_id: int, understood: list[str] | None = None, resume_note: str = "",
+                              minutes: int = 0, add_subtopics: list[ConceptIn] | None = None,
+                              day: str | None = None) -> dict:
+    """Save learning progress so a new chat can carry on. understood = subtopic names the user confirmed, added to
+    those saved already. resume_note = where you stopped and what comes next. minutes = time since the last save, credited
+    to the roadmap item. add_subtopics = anything missing from the topic, which then has to be covered too."""
+    async with owner_session() as (session, user):
+        topic = await get_topic(session, user, topic_id)
+        names = {c["name"] for c in topic.concepts}
+        added = [c for c in concept_dicts(add_subtopics or []) if c["name"] not in names]
+        topic.concepts = [*topic.concepts, *added]
+        names |= {c["name"] for c in added}
+        unknown = set(understood or []) - names
+        if unknown:
+            raise ToolError(f"Not subtopics of this topic: {', '.join(sorted(unknown))}. Use: {', '.join(sorted(names))}.")
+        topic.understood = [c["name"] for c in topic.concepts if c["name"] in {*topic.understood, *(understood or [])}]
+        if resume_note:
+            topic.resume_note = resume_note
+        if minutes > 0:
+            await timelogs.add(session, user, parse_day(day, user), topic.goal_id, minutes, topic.roadmap_item_id,
+                               topic.title, "interview")
+        return {"topic": topic.title, "understood": topic.understood,
+                "not_understood_yet": [c["name"] for c in topic.concepts if c["name"] not in topic.understood]}
+
+
+@mcp.tool()
+async def save_step_overview(item_id: int, content: str) -> dict:
+    """Save a roadmap step's big-picture note in Markdown, shown in the Notes tab. Replaces any earlier version."""
+    if not content.strip():
+        raise ToolError("The note is empty.")
+    if len(content) > topic_notes.MAX_CHARS:
+        raise ToolError(f"Notes are limited to {topic_notes.MAX_CHARS} characters.")
+    async with owner_session() as (session, user):
+        item = await get_item(session, user, item_id)
+        phase = await session.get(RoadmapPhase, item.phase_id)
+        note = await topic_notes.save_overview(session, phase.goal_id, item, content)
+        return {"note_id": note.id, "title": note.title}
+
+
+@mcp.tool()
+async def get_teaching_protocol() -> str:
+    """The user's teaching method. Call this before Learn mode and follow it exactly."""
+    return teaching.PROTOCOL
 
 
 @mcp.tool()
@@ -1641,8 +1740,8 @@ def new_goal(goal: str) -> str:
 
 @mcp.prompt(title="Learn today's topics")
 def learn_today() -> str:
-    return ("Get my study context for today. Show today's topics, then switch to Learn mode: I'll ask you about them "
-            "and you teach me, and tell me which subtopics we haven't covered yet.")
+    return ("Get my study context for today and my teaching protocol. Then teach me today's first topic by following "
+            "the protocol exactly, from where I really am.")
 
 
 @mcp.prompt(title="Interview me")

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from app.core.db import SessionLocal
 from app.models import StudyTopic
-from app.services import notes
+from app.services import notes, topics
 from tests.conftest import register
 from tests.test_api_flow import setup_flexible_goal
 
@@ -71,3 +71,9 @@ async def test_notes_are_in_the_export(client):
     await add_note(goal_id, "Kept", "Backed up")
     data = (await client.get("/me/export", headers=h)).json()
     assert [n["content"] for n in data["tables"]["topic_notes"]] == ["Backed up"]
+
+
+def test_a_topic_in_progress_only_needs_the_rest_of_its_time():
+    topic = StudyTopic(status="new", est_minutes=120, understood=["A"],
+                       concepts=[{"name": n} for n in "ABCD"])
+    assert topics.topic_minutes(topic) == 90

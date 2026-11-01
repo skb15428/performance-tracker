@@ -49,6 +49,16 @@ async def test_study_flow():
         ctx = await call(session, "get_study_context")
         assert [t["title"] for t in ctx["topics"]] == ["Graphs", "Heaps"] and not ctx["items_needing_topics"]
 
+        # The step's background is checked once, and its big picture is saved beside the topics
+        assert ctx["background_check_due"]["item_id"] == dsa["id"]
+        await call(session, "save_background_check", item_id=dsa["id"], known=["Python"], gaps=["Big O"])
+        assert (await call(session, "get_study_context"))["background_check_due"] is None
+        assert not (await call(session, "get_topic_path", topic_id=graphs))["big_picture_saved"]
+        await call(session, "save_step_overview", item_id=dsa["id"], content="# The story of DSA")
+        assert (await call(session, "get_topic_path", topic_id=graphs))["big_picture_saved"]
+        protocol = await session.call_tool("get_teaching_protocol", {})
+        assert "ONE CONCEPT" in protocol.content[0].text and "score = X / 20" in protocol.content[0].text
+
         # Notes are saved per topic, and a later version replaces the first
         assert (await call(session, "get_topic_notes", topic_id=graphs))["content"] is None
         first = await call(session, "save_topic_notes", topic_id=graphs, content="# BFS")
@@ -67,7 +77,7 @@ async def test_study_flow():
         assert (await call(session, "get_roadmap", goal_id=gid))["phases"][0]["items"][0]["status"] != "done"
 
         # Failed interview: 62%, tomorrow carries the weak subtopic only
-        failed = await call(session, "save_interview", topic_id=graphs, minutes=60,
+        failed = await call(session, "save_interview", topic_id=graphs, skipped_learning=True, minutes=60,
                             questions=marks(("BFS", 4.5), ("DFS", 1.5, )))
         assert not failed["passed"] and failed["percent_learned"] == 60 and failed["weak_subtopics"] == ["DFS"]
         assert failed["continues_on"] == tomorrow
@@ -81,8 +91,22 @@ async def test_study_flow():
                             questions=marks(("BFS", 5), ("DFS", 4.5)))
         assert passed["passed"] and passed["next_review_on"] == str(today + timedelta(days=4))
         assert not passed["roadmap_item_finished"]
-        heap = await call(session, "save_interview", topic_id=heaps, day=tomorrow,
-                          questions=marks(("Heapify", 5), ("Heapify", 5)))
+        questions = marks(("Heapify", 5), ("Heapify", 5))
+        early = await session.call_tool("save_interview", {"topic_id": heaps, "day": tomorrow, "questions": questions})
+        assert early.is_error and "Heapify" in early.content[0].text
+
+        # Progress carries over to a new chat, and a missing subtopic can be added
+        await call(session, "save_learn_progress", topic_id=heaps, resume_note="Stopped before sift-down",
+                   add_subtopics=[{"name": "Sift-down", "core": False}])
+        path = await call(session, "get_topic_path", topic_id=heaps)
+        assert path["not_understood_yet"] == ["Heapify", "Sift-down"] and path["position"] == 2 and path["of"] == 2
+        assert path["before"][0]["title"] == "Graphs" and path["topic"]["resume_note"] == "Stopped before sift-down"
+        wrong = await session.call_tool("save_learn_progress", {"topic_id": heaps, "understood": ["Tries"]})
+        assert wrong.is_error and "Sift-down" in wrong.content[0].text
+        done = await call(session, "save_learn_progress", topic_id=heaps, understood=["Heapify", "Sift-down"])
+        assert done["not_understood_yet"] == []
+
+        heap = await call(session, "save_interview", topic_id=heaps, day=tomorrow, questions=questions)
         assert heap["roadmap_item_finished"]
         mastery = await call(session, "get_mastery", goal_id=gid)
         assert mastery["items"][0]["passed"] == 2 and mastery["items"][0]["total"] == 2
@@ -166,11 +190,11 @@ async def test_rest_day_shows_whats_ahead_and_extra_work_is_a_bonus():
 
         # Working anyway: an early pass moves the next topic up
         answers = marks(("BFS", 5), ("BFS", 5), ("DFS", 5), ("DFS", 4))
-        out = await call(session, "save_interview", topic_id=graphs, minutes=45, questions=answers)
+        out = await call(session, "save_interview", topic_id=graphs, minutes=45, questions=answers, skipped_learning=True)
         assert out["passed"]
 
         # The same save again, as after a dropped connection, changes nothing
-        again = await call(session, "save_interview", topic_id=graphs, minutes=45, questions=answers)
+        again = await call(session, "save_interview", topic_id=graphs, minutes=45, questions=answers, skipped_learning=True)
         assert again["already_saved"] and again["passed"]
         day_view = await call(session, "get_day_context")
         assert [(x["minutes"], x["source"]) for x in day_view["already_logged"]] == [(45, "interview")]

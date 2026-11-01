@@ -20,7 +20,7 @@ const MODE: Record<TodayTopic['mode'], { label: string; tone: Tone }> = {
 }
 
 function TopicRow({ topic, index }: { topic: TodayTopic; index: number }) {
-  const covered = topic.concepts.filter((c) => (topic.concept_scores[c.name] ?? 0) >= 4).length
+  const covered = topic.concepts.filter((c) => topic.understood.includes(c.name) || topic.concept_scores[c.name] !== undefined).length
   return (
     <Link to={`/study/${topic.id}`} className="rise block" style={{ animationDelay: `${index * 50}ms` }}>
       <article className="flex items-center gap-4 rounded-3xl border border-line bg-surface p-5 transition hover:border-accent/50">
@@ -34,7 +34,7 @@ function TopicRow({ topic, index }: { topic: TodayTopic; index: number }) {
           </div>
           <h2 className="truncate font-display text-2xl leading-tight">{topic.title}</h2>
           <p className="mt-1 truncate text-xs text-muted">
-            {topic.mode === 'carryover' && topic.weak_concepts.length ? `Focus: ${topic.weak_concepts.join(', ')}` : `${covered}/${topic.concepts.length} subtopics covered · ${topic.goal}`}
+            {topic.mode === 'carryover' && topic.weak_concepts.length ? `Focus: ${topic.weak_concepts.join(', ')}` : `${covered}/${topic.concepts.length} subtopics understood · ${topic.goal}`}
           </p>
         </div>
         {topic.last_pct !== null ? (
@@ -95,6 +95,11 @@ function RoadmapStep({ step }: { step: UpcomingStep }) {
           ›
         </span>
       </summary>
+      {step.big_picture_note_id && (
+        <Link to={`/notes/${step.big_picture_note_id}`} className="mt-3 block px-3 text-sm font-medium text-accent-ink hover:underline">
+          Read the big picture →
+        </Link>
+      )}
       {step.topics.length > 0 ? (
         <ul className="mt-3 space-y-1">
           {step.topics.map((t) => (
@@ -169,6 +174,17 @@ export default function Study() {
   return (
     <>
       <PageHeader eyebrow={prettyDate(data.date, { weekday: 'long', month: 'long', day: 'numeric' })} title={data.rest_day ? 'Rest day' : "Today's topics"} subtitle={subtitle} />
+      {data.background_check_due && (
+        <div className="rise mb-4 rounded-3xl border border-accent/40 bg-accent-soft p-5">
+          <p className="font-medium">Start with a quick background check</p>
+          <p className="mt-1 mb-3 text-sm text-muted">
+            About 10 short questions before “{data.background_check_due.title}”, so you learn from your real starting point and skip what you know.
+          </p>
+          <OpenClaude message={`Use GoalCoach. Get your teaching protocol and do my background check for roadmap item ${data.background_check_due.id}, "${data.background_check_due.title}".`}>
+            Start with Claude
+          </OpenClaude>
+        </div>
+      )}
       {queue.length > 0 && (
         <div className="space-y-3">
           {queue.map((t, i) => (
@@ -275,7 +291,7 @@ export function TopicDetail() {
   const focus = picked.length ? picked : topic.status === 'learning' ? topic.weak_concepts : []
   const scope = focus.length ? ` Focus on these subtopics: ${focus.join(', ')}.` : ''
   const retest = topic.status === 'passed' && !!topic.next_review_on
-  const learn = `Use GoalCoach. Learn mode for study topic ${topic.id}, "${topic.title}". I'll ask, you teach.${scope}`
+  const learn = `Use GoalCoach. Get your teaching protocol and teach me study topic ${topic.id}, "${topic.title}".${scope}`
   const interview = `Use GoalCoach. ${retest ? 'Re-test' : 'Interview'} me on study topic ${topic.id}, "${topic.title}", in Interview mode.${scope}`
   const toggle = (name: string) => setPicked((p) => (p.includes(name) ? p.filter((n) => n !== name) : [...p, name]))
   const statusLabel = topic.status === 'passed' ? 'Passed' : topic.status === 'learning' ? 'In progress' : 'Not started'
@@ -298,9 +314,9 @@ export function TopicDetail() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <p className="mb-1 font-medium">1. Learn</p>
-            <p className="mb-3 text-sm text-muted">You ask, Claude teaches.</p>
+            <p className="mb-3 text-sm text-muted">One concept at a time. Type next to continue.</p>
             <OpenClaude message={learn} className="w-full">
-              Learn with Claude
+              {topic.resume_note ? 'Continue with Claude' : 'Learn with Claude'}
             </OpenClaude>
           </div>
           <div>
@@ -311,6 +327,7 @@ export function TopicDetail() {
             </OpenClaude>
           </div>
         </div>
+        {topic.resume_note && <p className="mt-4 text-sm"><span className="font-medium">Where you stopped:</span> <span className="text-muted">{topic.resume_note}</span></p>}
         <p className="mt-4 text-xs text-muted">To talk instead of type, tap the sound wave icon in Claude. Your score appears here after the interview.</p>
         <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
           <p className="text-sm text-muted">{topic.note_id ? 'Your notes are ready.' : 'Claude writes your notes after the interview.'}</p>
@@ -328,7 +345,7 @@ export function TopicDetail() {
         </div>
       </div>
 
-      <Card eyebrow="Subtopics" title={picked.length ? `${picked.length} selected for your next session` : 'Tap to pick what to cover'}>
+      <Card eyebrow={`Subtopics · ${topic.understood.length} of ${topic.concepts.length} understood`} title={picked.length ? `${picked.length} selected for your next session` : 'Tap to pick what to cover'}>
         <ul className="space-y-2">
           {topic.concepts.map((c) => {
             const score = topic.concept_scores[c.name]
@@ -347,7 +364,7 @@ export function TopicDetail() {
                       {c.name}
                       {c.core === false && <span className="ml-1.5 text-xs font-normal text-muted">optional</span>}
                     </span>
-                    {weak ? <Badge tone="amber">Weak</Badge> : score !== undefined ? <span className="text-xs text-muted tabular-nums">{score}/5</span> : null}
+                    {weak ? <Badge tone="amber">Weak</Badge> : topic.understood.includes(c.name) && score === undefined ? <Badge tone="green">Understood</Badge> : score !== undefined ? <span className="text-xs text-muted tabular-nums">{score}/5</span> : null}
                   </span>
                   {score !== undefined && <ProgressBar value={(score / 5) * 100} className="mt-2.5" />}
                 </button>
