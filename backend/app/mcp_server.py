@@ -48,6 +48,7 @@ from app.models import (
 )
 from app.routers.goals import goal_out
 from app.services import analysis, commitment, events, jobsearch, mastery, metrics, roadmap, timeline, timelogs, weekly
+from app.services import notes as topic_notes
 from app.services import topics as study
 from app.services.llm.outputs import DayAnalysis, PlanDetails, ReplanDraft, Resource, RoadmapDraft
 from app.services.push import local_now
@@ -118,6 +119,15 @@ mode is carryover; 3-4 short questions when mode is retest, with kind="retest").
 correct but shallow, 4 solid with reasons, 5 senior level with trade-offs. Never soften marks to be kind. Then call
 save_interview, tell them the % learned and verdict exactly as returned, and explain each gap. The server decides pass
 or fail; don't overrule it.
+NOTES: after every save_interview, pass or fail, write the topic's notes and call save_topic_notes, one note per topic.
+The user rereads these in the app's Notes tab, so write a complete study guide in Markdown: what it is and why it matters,
+every subtopic explained in depth, a simple analogy, worked examples, code in fenced blocks where code helps, trade-offs,
+common mistakes, likely interview questions with strong answers, and a final section on the gaps from this interview.
+The app shows the topic's title, so start at the first section.
+If the result shows notes_saved, call get_topic_notes first and improve that note rather than losing it. Use what was
+taught in this chat if you have it; otherwise work from the topic, its subtopics and the interview. If the user is in
+voice mode, say you're saving the notes, and if saving fails, tell them to tap Write my notes on the topic's page.
+
 VOICE: the user may talk to you in voice mode. Then use short natural sentences, with no tables, markdown or long lists,
 and describe code in words. If an answer sounds cut off or unclear, ask them to repeat it rather than marking it down.
 Save interviews with the tool as usual; if it fails, say so plainly.
@@ -1432,10 +1442,33 @@ async def save_interview(topic_id: int, questions: list[InterviewAnswer], minute
             finished = await study.sync_item(session, item, d)
         return {
             "topic": topic.title, "percent_learned": result.overall_pct, "passed": result.passed,
+            "notes_saved": await topic_notes.for_topic(session, topic.id) is not None,
             "verdict": result.reason, "concept_scores": result.concept_scores, "weak_subtopics": result.weak_concepts,
             "next_review_on": iso(topic.next_review_on), "continues_on": iso(topic.planned_for),
             "roadmap_item_finished": finished,
         }
+
+
+@mcp.tool()
+async def save_topic_notes(topic_id: int, content: str) -> dict:
+    """Save the topic's study notes in Markdown, for the user to reread in the app's Notes tab. Replaces any earlier
+    version, so call get_topic_notes first and include what's worth keeping."""
+    if not content.strip():
+        raise ToolError("The notes are empty.")
+    if len(content) > topic_notes.MAX_CHARS:
+        raise ToolError(f"Notes are limited to {topic_notes.MAX_CHARS} characters.")
+    async with owner_session() as (session, user):
+        note = await topic_notes.save(session, await get_topic(session, user, topic_id), content)
+        return {"note_id": note.id, "title": note.title, "characters": len(content)}
+
+
+@mcp.tool()
+async def get_topic_notes(topic_id: int) -> dict:
+    """The topic's saved notes, or null content if there are none yet."""
+    async with owner_session() as (session, user):
+        topic = await get_topic(session, user, topic_id)
+        note = await topic_notes.for_topic(session, topic.id)
+        return {"topic_id": topic.id, "title": topic.title, "content": note.content if note else None}
 
 
 @mcp.tool()

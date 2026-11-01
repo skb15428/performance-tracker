@@ -10,7 +10,7 @@ from app.core.auth import current_user
 from app.core.db import get_session
 from app.models import Goal, GoalMetric, InterviewSession, MetricEntry, StudyTopic, User
 from app.schemas import MetricIn, MetricLogIn
-from app.services import analysis, metrics, roadmap
+from app.services import analysis, metrics, notes, roadmap
 from app.services import topics as study
 from app.services.push import local_now
 
@@ -89,7 +89,8 @@ async def topic_detail(topic_id: int, user: User = Depends(current_user), sessio
         raise HTTPException(404, "Topic not found")
     sessions = await session.scalars(
         select(InterviewSession).where(InterviewSession.topic_id == topic.id).order_by(InterviewSession.id.desc()))
-    return {**topic_out(topic), "sessions": [session_out(s) for s in sessions]}
+    note = await notes.for_topic(session, topic.id)
+    return {**topic_out(topic), "note_id": note.id if note else None, "sessions": [session_out(s) for s in sessions]}
 
 
 @router.get("/goals/{goal_id}")

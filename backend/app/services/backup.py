@@ -13,8 +13,8 @@ from app.models import User
 EXPORT_VERSION = 1
 SECRET_COLUMNS = {"hashed_password", "gemini_key_enc", "calendar_token", "failed_logins", "locked_until"}
 OWNED = (  # parents before children, so a restore can run in this order
-    models.Goal, models.RoadmapPhase, models.RoadmapItem, models.StudyTopic, models.InterviewSession, models.GoalMetric,
-    models.MetricEntry, models.DailyEntry, models.Activity, models.ActivityLink, models.DailyReview, models.PlanItem,
+    models.Goal, models.RoadmapPhase, models.RoadmapItem, models.StudyTopic, models.TopicNote, models.InterviewSession,
+    models.GoalMetric, models.MetricEntry, models.DailyEntry, models.Activity, models.ActivityLink, models.DailyReview, models.PlanItem,
     models.TimeLog, models.WeekPlan, models.WeeklyReview, models.ReplanProposal, models.JobApplication,
 )
 
@@ -47,6 +47,7 @@ async def _owned_rows(session: AsyncSession, user: User) -> dict[str, list]:
         models.RoadmapPhase: models.RoadmapPhase.goal_id.in_(goals),
         models.RoadmapItem: models.RoadmapItem.phase_id.in_(phases),
         models.StudyTopic: models.StudyTopic.goal_id.in_(goals),
+        models.TopicNote: models.TopicNote.goal_id.in_(goals),
         models.InterviewSession: models.InterviewSession.topic_id.in_(topics),
         models.GoalMetric: models.GoalMetric.goal_id.in_(goals),
         models.MetricEntry: models.MetricEntry.metric_id.in_(metrics),

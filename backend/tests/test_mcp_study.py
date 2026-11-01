@@ -49,6 +49,15 @@ async def test_study_flow():
         ctx = await call(session, "get_study_context")
         assert [t["title"] for t in ctx["topics"]] == ["Graphs", "Heaps"] and not ctx["items_needing_topics"]
 
+        # Notes are saved per topic, and a later version replaces the first
+        assert (await call(session, "get_topic_notes", topic_id=graphs))["content"] is None
+        first = await call(session, "save_topic_notes", topic_id=graphs, content="# BFS")
+        again = await call(session, "save_topic_notes", topic_id=graphs, content="# BFS and DFS")
+        assert first["note_id"] == again["note_id"] and first["title"] == "Graphs"
+        assert (await call(session, "get_topic_notes", topic_id=graphs))["content"] == "# BFS and DFS"
+        empty = await session.call_tool("save_topic_notes", {"topic_id": graphs, "content": "  "})
+        assert empty.is_error and "empty" in empty.content[0].text
+
         # Hours alone can't finish a knowledge item
         refused = await session.call_tool("update_roadmap_item", {"item_id": dsa["id"], "status": "done"})
         assert refused.is_error and "unpassed topics" in refused.content[0].text

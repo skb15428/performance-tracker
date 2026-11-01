@@ -15,6 +15,7 @@ from app.routers import (
     entries,
     goals,
     jobs,
+    notes,
     oauth_login,
     plan,
     replans,
@@ -69,7 +70,7 @@ app.include_router(fastapi_users.get_reset_password_router(), prefix="/auth", ta
 if get_settings().allow_registration:
     app.include_router(fastapi_users.get_register_router(UserRead, UserCreate), prefix="/auth", tags=["auth"])
 for module in (goals, entries, plan, replans, trends, reviews, dashboard, settings, jobs, oauth_login, study, timelogs,
-               applications, calendar):
+               applications, calendar, notes):
     app.include_router(module.router)
 
 

@@ -14,6 +14,12 @@ const icons: Record<string, ReactNode> = {
       <path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5" />
     </>
   ),
+  notes: (
+    <>
+      <path d="M6 3h9l4 4v14H6z" />
+      <path d="M15 3v4h4M9 12h6M9 16h6" />
+    </>
+  ),
   goals: (
     <>
       <circle cx="12" cy="12" r="9" />
@@ -39,6 +45,7 @@ const icons: Record<string, ReactNode> = {
 const NAV = [
   { to: '/', label: 'Today', icon: 'today', end: true },
   { to: '/study', label: 'Study', icon: 'study' },
+  { to: '/notes', label: 'Notes', icon: 'notes' },
   { to: '/goals', label: 'Goals', icon: 'goals' },
   { to: '/trends', label: "What's new", icon: 'trends' },
   { to: '/weekly', label: 'Weekly', icon: 'weekly' },
@@ -96,7 +103,7 @@ export default function Layout({ onLogout }: { onLogout: () => void }) {
         <Outlet />
       </main>
 
-      <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 grid grid-cols-6 rounded-full border border-line bg-surface/80 p-1.5 shadow-lg shadow-black/5 backdrop-blur-xl md:hidden">
+      <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 grid grid-cols-7 rounded-full border border-line bg-surface/80 p-1.5 shadow-lg shadow-black/5 backdrop-blur-xl md:hidden">
         {NAV.map((n) => (
           <NavLink
             key={n.to}

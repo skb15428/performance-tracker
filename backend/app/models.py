@@ -347,6 +347,20 @@ class StudyTopic(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class TopicNote(Base):
+    """Claude's written notes on one study topic, in Markdown. They outlive the topic if it's later replaced."""
+
+    __tablename__ = "topic_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    topic_id: Mapped[int | None] = mapped_column(ForeignKey("study_topics.id", ondelete="SET NULL"), unique=True)
+    title: Mapped[str] = mapped_column(String(300))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class InterviewSession(Base):
     __tablename__ = "interview_sessions"
 

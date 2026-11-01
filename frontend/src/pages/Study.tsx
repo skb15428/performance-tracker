@@ -265,7 +265,7 @@ export function TopicDetail() {
   const id = Number(useParams().id)
   const { data: topic, isLoading, error } = useQuery({
     queryKey: ['study', 'topic', id],
-    queryFn: () => api<StudyTopic & { sessions: InterviewResult[] }>(`/study/topics/${id}`),
+    queryFn: () => api<StudyTopic & { note_id: number | null; sessions: InterviewResult[] }>(`/study/topics/${id}`),
   })
   const [picked, setPicked] = useState<string[]>([])
 
@@ -312,6 +312,20 @@ export function TopicDetail() {
           </div>
         </div>
         <p className="mt-4 text-xs text-muted">To talk instead of type, tap the sound wave icon in Claude. Your score appears here after the interview.</p>
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
+          <p className="text-sm text-muted">{topic.note_id ? 'Your notes are ready.' : 'Claude writes your notes after the interview.'}</p>
+          {topic.note_id ? (
+            <Link to={`/notes/${topic.note_id}`} className="shrink-0 text-sm font-medium text-accent-ink hover:underline">
+              Read notes →
+            </Link>
+          ) : (
+            topic.attempts > 0 && (
+              <OpenClaude message={`Use GoalCoach. Write and save my notes for study topic ${topic.id}, "${topic.title}".`} variant="secondary" className="shrink-0">
+                Write my notes
+              </OpenClaude>
+            )
+          )}
+        </div>
       </div>
 
       <Card eyebrow="Subtopics" title={picked.length ? `${picked.length} selected for your next session` : 'Tap to pick what to cover'}>

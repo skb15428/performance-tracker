@@ -9,6 +9,7 @@ import GoalDetail from './pages/GoalDetail'
 import Goals from './pages/Goals'
 import JobSearch from './pages/JobSearch'
 import Login from './pages/Login'
+import Notes, { NoteDetail } from './pages/Notes'
 import Proof from './pages/Proof'
 import ResetPassword from './pages/ResetPassword'
 import SettingsPage from './pages/Settings'
@@ -43,6 +44,8 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="study" element={<Study />} />
         <Route path="study/:id" element={<TopicDetail />} />
+        <Route path="notes" element={<Notes />} />
+        <Route path="notes/:id" element={<NoteDetail />} />
         <Route path="log" element={<DailyLog />} />
         <Route path="log/:day" element={<DailyLog />} />
         <Route path="goals" element={<Goals />} />

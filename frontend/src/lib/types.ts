@@ -402,6 +402,10 @@ export type StudyTopic = {
   next_review_on: string | null
 }
 
+export type NoteSummary = { id: number; topic_id: number | null; title: string; snippet: string; updated_at: string }
+
+export type Note = { id: number; topic_id: number | null; title: string; content: string; updated_at: string }
+
 export type TodayTopic = StudyTopic & { goal: string; mode: 'retest' | 'carryover' | 'new' | 'done'; minutes: number }
 
 export type InterviewResult = {

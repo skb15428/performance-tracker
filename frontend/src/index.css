@@ -145,3 +145,79 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     --seq-4: #a5b4fc;
   }
 }
+
+/* Claude's Markdown notes */
+.note-body {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.note-body > * + * {
+  margin-top: 1em;
+}
+.note-body h1,
+.note-body h2,
+.note-body h3 {
+  margin-top: 1.6em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.note-body > :first-child {
+  margin-top: 0;
+}
+.note-body h1 {
+  font-size: 1.5rem;
+}
+.note-body h2 {
+  font-size: 1.25rem;
+}
+.note-body h3 {
+  font-size: 1.05rem;
+}
+.note-body ul,
+.note-body ol {
+  padding-left: 1.4em;
+}
+.note-body ul {
+  list-style: disc;
+}
+.note-body ol {
+  list-style: decimal;
+}
+.note-body a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+.note-body blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1em;
+  color: var(--muted);
+}
+.note-body code {
+  border-radius: 0.35em;
+  background: var(--surface-2);
+  padding: 0.1em 0.35em;
+  font-size: 0.875em;
+  overflow-wrap: normal;
+}
+.note-body pre {
+  overflow-x: auto;
+  border-radius: 1rem;
+  background: var(--surface-2);
+  padding: 1rem;
+}
+.note-body pre code {
+  background: none;
+  padding: 0;
+}
+.note-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.875em;
+}
+.note-body th,
+.note-body td {
+  border: 1px solid var(--line);
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
