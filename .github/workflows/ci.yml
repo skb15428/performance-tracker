@@ -32,10 +32,12 @@ jobs:
         run: uv run pytest -q
         env:
           TEST_DATABASE_URL: postgresql+asyncpg://goalcoach:goalcoach@localhost:5432/goalcoach_test
-      - name: Migrations match the models
-        run: uv run alembic upgrade head && uv run alembic check
+      - name: Migrations match the models, on a clean database
+        run: |
+          PGPASSWORD=goalcoach psql -h localhost -U goalcoach -d goalcoach_test -c 'create database migrations'
+          uv run alembic upgrade head && uv run alembic check
         env:
-          DATABASE_URL: postgresql+asyncpg://goalcoach:goalcoach@localhost:5432/goalcoach_test
+          DATABASE_URL: postgresql+asyncpg://goalcoach:goalcoach@localhost:5432/migrations
 
   frontend:
     runs-on: ubuntu-latest

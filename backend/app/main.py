@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
@@ -74,7 +75,7 @@ for module in (goals, entries, plan, replans, trends, reviews, dashboard, settin
 
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    return {"ok": True, "version": os.environ.get("RENDER_GIT_COMMIT", "")[:7]}  # which commit is live
 
 
 @app.middleware("http")
