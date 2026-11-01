@@ -20,7 +20,7 @@ const MODE: Record<TodayTopic['mode'], { label: string; tone: Tone }> = {
 }
 
 function TopicRow({ topic, index }: { topic: TodayTopic; index: number }) {
-  const covered = topic.concepts.filter((c) => topic.understood.includes(c.name) || topic.concept_scores[c.name] !== undefined).length
+  const covered = topic.concepts.filter((c) => topic.understood.includes(c.name) || (topic.concept_scores[c.name] ?? 0) >= 4).length
   return (
     <Link to={`/study/${topic.id}`} className="rise block" style={{ animationDelay: `${index * 50}ms` }}>
       <article className="flex items-center gap-4 rounded-3xl border border-line bg-surface p-5 transition hover:border-accent/50">
