@@ -111,6 +111,7 @@ async def week_score(session: AsyncSession, user: User, start: date, today: date
 
     by_day = dict.fromkeys(days, 0.0)
     rows, inputs = [], []
+    day_minutes = 0  # a usual working day, across all goals
     for g in goals:
         first = goal_start(user, g)
         usual = await frozen_minutes(session, user, g, start, today)
@@ -120,7 +121,8 @@ async def week_score(session: AsyncSession, user: User, start: date, today: date
             kind, per_goal = types.get(d, (None, {}))
             targets[d] = roadmap.adjusted_minutes(usual.get(d.isoformat(), 0), per_goal.get(str(g.id), kind), working_day)
         active = [d for d in days if d >= first]
-        full = min(sum(usual.get(d.isoformat(), 0) for d in active), sum(targets[d] for d in active))
+        full = min(sum(usual.values()), sum(targets[d] for d in active))
+        day_minutes += working_day
         counted = rated = rated_minutes = sessions = 0.0
         worked_today = 0.0
         log_goal = is_log_goal(g)
@@ -172,6 +174,8 @@ async def week_score(session: AsyncSession, user: User, start: date, today: date
         "hours_pct": result.hours_pct if result else None, "quality": result.quality if result else None,
         "hours_done": round(done / 60, 1), "hours_target": round(sum(r["hours_target"] for r in rows), 1),
         "hours_expected_so_far": round(expected / 60, 1), "ahead_hours": round((done - expected) / 60, 1),
+        "average_hours": round(done / expected * day_minutes / 60, 1) if expected else None,
+        "planned_hours_per_day": round(day_minutes / 60, 1),
         "rest_days_marked": sum(1 for kind, _ in types.values() if kind == "rest"), "goals": rows,
         "minutes_by_day": {d.isoformat(): round(m) for d, m in by_day.items()},
     }
@@ -278,11 +282,12 @@ async def week_stats(session: AsyncSession, user: User, start: date, today: date
                func.date(TrendSuggestion.created_at).between(start, end))
     )
 
-    elapsed = [start + timedelta(days=n) for n in range(7) if start + timedelta(days=n) <= today]
+    week = await week_score(session, user, start, today)
+    planned = {r["goal_id"]: r["hours_target"] for r in week["goals"]}
     per_goal = []
     for g in goals:
         st = await timeline.goal_status(session, user, g, min(end, today))
-        committed = sum([await roadmap.goal_target_minutes(session, user, g, d) for d in elapsed]) / 60
+        committed = planned.get(g.id, 0)
         hours = minutes.get(g.id, 0) / 60
         per_goal.append({"goal_id": g.id, "title": g.title, "minutes": round(minutes.get(g.id, 0)),
                          "hours": round(hours, 1), "committed_hours": round(committed, 1),
@@ -306,8 +311,8 @@ async def week_stats(session: AsyncSession, user: User, start: date, today: date
     trend = [await week_basics(session, user, start - timedelta(days=7 * n), today) for n in range(3, -1, -1)]
     return {
         "week_start": start.isoformat(),
-        "week_score": await week_score(session, user, start, today),
-        "days_logged": len(scored),
+        "week_score": week,
+        "days_logged": len({d for d, m in week["minutes_by_day"].items() if m} | {r.date.isoformat() for r in scored}),
         "rest_days": [r.date.isoformat() for r in reviews if r.rest_day],
         "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
         "daily_scores": [{"date": r.date.isoformat(), "score": r.total_score} for r in scored],

@@ -217,6 +217,11 @@ function ThisWeek({ week, tip, forecast }: { week: WeekScore; tip?: string; fore
             {pace}
             {week.rest_days_marked > 0 && ` · ${week.rest_days_marked} rest day${week.rest_days_marked > 1 ? 's' : ''} marked`}
           </p>
+          {week.average_hours != null && (
+            <p className="mt-1 text-xs text-muted tabular-nums">
+              {week.average_hours}h a day on average · planned {week.planned_hours_per_day}h
+            </p>
+          )}
         </div>
       </div>
       {week.goals.length > 1 && (

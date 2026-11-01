@@ -127,6 +127,72 @@ async def test_past_scores_dont_change_when_the_routine_does(client):
         await s.commit()
 
 
+async def week_of(client, email: str, h: dict, goal_id: int, monday: date, hours: list[float],
+                  marks: dict[int, str] | None = None) -> dict:
+    """Logs a Mon-Sun week of hours, marks days rest or work, and returns how it scored."""
+    from tests.test_api_flow import log_hours
+    for offset, kind in (marks or {}).items():
+        r = await client.put(f"/entries/{monday + timedelta(days=offset)}/type", headers=h, json={"day_type": kind})
+        assert r.status_code == 200
+    for offset, worked in enumerate(hours):
+        if worked:
+            await log_hours(client, h, goal_id, monday + timedelta(days=offset), round(worked * 60))
+    async with SessionLocal() as s:
+        return await weekly.week_score(s, await owner(s, email), monday, utc_today())
+
+
+async def test_rest_tuesday_work_sunday_and_uneven_hours_still_make_a_full_week(client):
+    monday = last_monday()
+    h, goal_id, _ = await setup_flexible_goal(client, "swap@example.com", monday, ALL_DAYS[:6])
+    week = await week_of(client, "swap@example.com", h, goal_id, monday, [4, 0, 2, 2, 1, 2, 1], {1: "rest", 6: "work"})
+    assert (week["hours_done"], week["hours_target"], week["hours_pct"], week["score"]) == (12, 12, 100, 100)
+    assert week["average_hours"] == 2 and week["planned_hours_per_day"] == 2
+
+
+async def test_uneven_hours_add_up_without_marking_anything(client):
+    monday = last_monday()
+    h, goal_id, _ = await setup_flexible_goal(client, "unmarked@example.com", monday, ALL_DAYS[:6])
+    week = await week_of(client, "unmarked@example.com", h, goal_id, monday, [4, 0, 2, 2, 1, 2, 1])
+    assert (week["hours_done"], week["hours_target"], week["score"]) == (12, 12, 100)
+
+
+async def test_a_short_week_scores_against_the_planned_average(client):
+    monday = last_monday()
+    h, goal_id, _ = await setup_flexible_goal(client, "short@example.com", monday, ALL_DAYS[:6])
+    week = await week_of(client, "short@example.com", h, goal_id, monday, [4, 0, 0, 1, 0, 0, 1])
+    assert (week["hours_done"], week["hours_target"], week["score"]) == (6, 12, 50)
+    assert week["average_hours"] == 1 and week["planned_hours_per_day"] == 2
+
+
+async def test_a_rest_day_lowers_the_week_by_one_day(client):
+    monday = last_monday()
+    h, goal_id, _ = await setup_flexible_goal(client, "one-rest@example.com", monday, ALL_DAYS[:6])
+    week = await week_of(client, "one-rest@example.com", h, goal_id, monday, [2, 0, 2, 2, 2, 2, 0], {1: "rest"})
+    assert (week["hours_done"], week["hours_target"], week["score"]) == (10, 10, 100)
+    assert week["average_hours"] == 2
+
+
+async def test_a_goal_started_on_a_rest_day_can_still_work_that_day(client):
+    sunday = last_monday() + timedelta(days=6)
+    monday = last_monday()
+    h, goal_id, _ = await setup_flexible_goal(client, "sunday@example.com", sunday, ALL_DAYS[:6])
+    week = await week_of(client, "sunday@example.com", h, goal_id, monday, [0, 0, 0, 0, 0, 0, 2], {6: "work"})
+    assert (week["hours_done"], week["hours_target"], week["score"]) == (2, 2, 100)
+    assert week["average_hours"] == 2
+
+
+async def test_the_weekly_report_uses_the_same_hours_as_the_score(client):
+    monday = last_monday()
+    h, goal_id, _ = await setup_flexible_goal(client, "report@example.com", monday, ALL_DAYS[:6])
+    week = await week_of(client, "report@example.com", h, goal_id, monday, [4, 2, 2, 2, 1, 0, 1], {6: "work"})
+    assert week["hours_target"] == 12  # working Sunday as well doesn't raise the bar to 14
+    await client.post("/time-logs", headers=h, json={"day": str(monday + timedelta(days=5)), "goal_id": goal_id,
+                                                     "minutes": 30})
+    async with SessionLocal() as s:
+        stats = await weekly.week_stats(s, await owner(s, "report@example.com"), monday, utc_today())
+    assert stats["goals"][0]["committed_hours"] == 12 and stats["days_logged"] == 7
+
+
 async def test_a_gym_session_counts_in_full_and_days_off_can_be_per_goal(client):
     today = utc_today()
     monday = today - timedelta(days=today.weekday())

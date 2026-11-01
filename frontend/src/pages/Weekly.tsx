@@ -7,12 +7,13 @@ import type { WeeklyReview } from '../lib/types'
 
 function Review({ r }: { r: WeeklyReview }) {
   const total = r.stats.goals.reduce((s, g) => s + g.minutes, 0) || 1
+  const week = r.stats.week_score
   return (
     <Card title={`Week of ${prettyDate(r.week_start, { year: 'numeric' })}`} action={<Badge>{r.stats.days_logged}/7 days logged</Badge>}>
       <div className="mb-4 grid grid-cols-3 gap-3 text-center">
         <div>
           <p className="text-xs text-muted">Week score</p>
-          <p className="text-xl font-bold tabular-nums">{r.stats.week_score?.score ?? r.stats.avg_score ?? '—'}</p>
+          <p className="text-xl font-bold tabular-nums">{week?.score ?? r.stats.avg_score ?? '—'}</p>
         </div>
         <div>
           <p className="text-xs text-muted">Plan done</p>
@@ -25,6 +26,11 @@ function Review({ r }: { r: WeeklyReview }) {
           <p className="text-xl font-bold tabular-nums">{fmtMinutes(r.stats.drift_minutes)}</p>
         </div>
       </div>
+      {week?.average_hours != null && (
+        <p className="mb-4 text-center text-sm text-muted tabular-nums">
+          {week.hours_done}h of {week.hours_target}h · {week.average_hours}h a day on average, planned {week.planned_hours_per_day}h
+        </p>
+      )}
       <div className="mb-4 space-y-2">
         {r.stats.goals.map((g, i) => (
           <div key={g.goal_id} className="text-sm">

@@ -269,6 +269,8 @@ export type WeekScore = {
   hours_target: number
   hours_expected_so_far: number
   ahead_hours: number
+  average_hours?: number | null // reviews saved before this field existed don't have it
+  planned_hours_per_day?: number
   rest_days_marked: number
   goals: {
     goal_id: number
